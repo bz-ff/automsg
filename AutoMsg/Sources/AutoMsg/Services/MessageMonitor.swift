@@ -221,6 +221,7 @@ final class MessageMonitor: ObservableObject {
 
             let raw = try await ollama.generate(prompt: prompt)
             var reply = ConversationContext.cleanLLMArtifacts(raw)
+            reply = ConversationContext.enforceSpelling(reply, profile: liveContact.memory.styleProfile)
             reply = ConversationContext.enforceEmojiRate(reply, profile: liveContact.memory.styleProfile)
             reply = ConversationContext.scrubPII(reply)
             guard !reply.isEmpty else { return }
@@ -278,6 +279,7 @@ final class MessageMonitor: ObservableObject {
             let prompt = ConversationContext.buildDraftPrompt(contact: live.displayLabel, history: history, memory: memory)
             let raw = try await ollama.generate(prompt: prompt)
             var draft = ConversationContext.cleanLLMArtifacts(raw)
+            draft = ConversationContext.enforceSpelling(draft, profile: live.memory.styleProfile)
             draft = ConversationContext.enforceEmojiRate(draft, profile: live.memory.styleProfile)
             draft = ConversationContext.scrubPII(draft)
             return draft.isEmpty ? nil : draft

@@ -86,6 +86,69 @@ enum ConversationContext {
         """
     }
 
+    /// Replace egregious text-speak ("2moro", "dat", "plz") with normal spellings,
+    /// unless the user's actual examples or abbreviation list contain that token.
+    /// LLMs over-correct toward bro-text and ignore prompt-level forbid rules; this
+    /// is a deterministic last line of defense.
+    static func enforceSpelling(_ text: String, profile: UserStyleProfile?) -> String {
+        // Map of common LLM-isms to their proper form
+        let substitutions: [(pattern: String, replacement: String)] = [
+            (#"\b2moro\b"#, "tomorrow"),
+            (#"\b2morrow\b"#, "tomorrow"),
+            (#"\btmrw\b"#, "tomorrow"),
+            (#"\b2nite\b"#, "tonight"),
+            (#"\btonite\b"#, "tonight"),
+            (#"\b2day\b"#, "today"),
+            (#"\bdat\b"#, "that"),
+            (#"\bdis\b"#, "this"),
+            (#"\bgud\b"#, "good"),
+            (#"\bplz\b"#, "please"),
+            (#"\bpls\b"#, "please"),
+            (#"\bcuz\b"#, "because"),
+            (#"\bwit\b"#, "with"),
+            (#"\bda\b"#, "the"),
+            (#"\bouttta\b"#, "out of"),
+            (#"\bgonna\b"#, "gonna"),  // keep gonna — common in modern texting
+            (#"\bouttta\b"#, "out of"),
+            (#"\b4u\b"#, "for you"),
+            (#"\b4me\b"#, "for me"),
+            (#"\bb4\b"#, "before"),
+            (#"\bw\\/?\b"#, "with"),
+        ]
+
+        // The user may genuinely type some of these — preserve any token that appears
+        // in their style profile's abbreviations or examples.
+        let allowedTokens: Set<String> = {
+            guard let p = profile else { return [] }
+            var s = Set(p.commonAbbreviations.map { $0.lowercased() })
+            for example in p.examples {
+                let words = example.lowercased()
+                    .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                    .filter { !$0.isEmpty }
+                s.formUnion(words)
+            }
+            return s
+        }()
+
+        var result = text
+        for (pattern, replacement) in substitutions {
+            // Skip if the replacement target appears in the user's actual abbreviations/examples
+            // (e.g. if the user really does type "2moro", leave it alone)
+            let baseToken = pattern
+                .replacingOccurrences(of: #"\\b"#, with: "")
+                .replacingOccurrences(of: #"\\"#, with: "")
+            if allowedTokens.contains(baseToken) { continue }
+
+            // Case-preserving regex replacement: match in either case but emit the
+            // replacement in the case style of the surrounding context.
+            if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
+                let range = NSRange(result.startIndex..., in: result)
+                result = regex.stringByReplacingMatches(in: result, range: range, withTemplate: replacement)
+            }
+        }
+        return result
+    }
+
     /// Remove emojis from text if the user's profile says they use them rarely.
     /// Strips emoji characters and trims whitespace that gets left behind.
     static func enforceEmojiRate(_ text: String, profile: UserStyleProfile?) -> String {
