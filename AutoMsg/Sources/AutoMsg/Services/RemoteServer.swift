@@ -179,6 +179,16 @@ final class RemoteServer {
                 ])
             }
 
+            if req.method == "POST", req.path.hasSuffix("/handle") {
+                let id = decodeID(req.path.replacingOccurrences(of: "/api/contacts/", with: "").replacingOccurrences(of: "/handle", with: ""))
+                let body = (try? JSONSerialization.jsonObject(with: req.body) as? [String: Any]) ?? [:]
+                if let handle = body["handle"] as? String {
+                    appState.setPreferredHandle(handle, for: id)
+                    return .json(200, ["preferredHandle": handle])
+                }
+                return .json(400, ["error": "missing handle"])
+            }
+
             if req.method == "POST", req.path.hasSuffix("/mode") {
                 let id = decodeID(req.path.replacingOccurrences(of: "/api/contacts/", with: "").replacingOccurrences(of: "/mode", with: ""))
                 let body = (try? JSONSerialization.jsonObject(with: req.body) as? [String: Any]) ?? [:]

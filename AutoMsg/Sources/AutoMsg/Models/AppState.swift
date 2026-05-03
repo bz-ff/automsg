@@ -409,13 +409,18 @@ final class AppState: ObservableObject {
                 return $0.displayName.lowercased() < $1.displayName.lowercased()
             }
 
-            // Preserve existing isEnabled / currentDraft state by id
+            // Preserve ALL user-set state across rediscovery: isEnabled, currentDraft,
+            // preferredHandle, smartMode, memory. Only displayName and handles get
+            // refreshed from the new discovery pass.
             let prev = Dictionary(uniqueKeysWithValues: contacts.map { ($0.id, $0) })
             contacts = built.map { newContact in
                 var c = newContact
                 if let p = prev[c.id] {
                     c.isEnabled = p.isEnabled
                     c.currentDraft = p.currentDraft
+                    c.preferredHandle = p.preferredHandle
+                    c.smartMode = p.smartMode
+                    c.memory = p.memory
                 }
                 return c
             }

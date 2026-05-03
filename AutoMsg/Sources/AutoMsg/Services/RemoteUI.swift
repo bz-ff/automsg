@@ -445,6 +445,19 @@ function renderDetail(d) {
     </div>
   `;
 
+  const handleSel = document.getElementById('handle-select');
+  if (handleSel) {
+    handleSel.addEventListener('change', async (e) => {
+      const r = await fetch(`/api/contacts/${encodeURIComponent(d.id)}/handle?token=${TOKEN}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ handle: e.target.value })
+      }).then(r => r.json());
+      if (r.error) toast('Error: ' + r.error);
+      else toast('Send target: ' + r.preferredHandle);
+    });
+  }
+
   const modeSel = document.getElementById('mode-select');
   if (modeSel) {
     modeSel.addEventListener('change', async (e) => {
