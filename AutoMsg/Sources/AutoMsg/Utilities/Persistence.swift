@@ -42,4 +42,11 @@ enum Persistence {
         get { defaults.bool(forKey: remoteServerEnabledKey) }
         set { defaults.set(newValue, forKey: remoteServerEnabledKey) }
     }
+
+    private static let setupCompleteKey = "com.automsg.setupComplete"
+
+    static var setupComplete: Bool {
+        get { defaults.bool(forKey: setupCompleteKey) }
+        set { defaults.set(newValue, forKey: setupCompleteKey) }
+    }
 }

@@ -8,12 +8,25 @@ struct AutoMsgApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environmentObject(appState)
-                .onAppear {
-                    appDelegate.appState = appState
+            Group {
+                if appState.setupComplete {
+                    ContentView()
+                } else {
+                    SetupWizardView()
+                }
+            }
+            .environmentObject(appState)
+            .onAppear {
+                appDelegate.appState = appState
+                if appState.setupComplete {
                     appState.bootstrap()
                 }
+            }
+            .onChange(of: appState.setupComplete) { _, complete in
+                if complete {
+                    appState.bootstrap()
+                }
+            }
         }
         .windowStyle(.titleBar)
         .defaultSize(width: 800, height: 600)

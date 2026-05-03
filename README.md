@@ -14,23 +14,38 @@ A native macOS SwiftUI app that auto-replies to incoming iMessages and SMS using
 - **iPhone remote** — embedded HTTP server with mobile web UI, QR-code pairing, token auth
 - **Activity log + status indicators** — Ollama, Messages, Monitor, Server health at a glance
 
+## Install (end users)
+
+Download the latest `AutoMsg.dmg` from [Releases](https://github.com/bz-ff/automsg/releases), drag AutoMsg to Applications, and launch. On first run, a setup wizard will:
+
+1. Detect or help you install Ollama (the local AI runtime)
+2. Start the Ollama service
+3. Download the `llama3.2:3b` model (~2GB) with progress
+4. Open System Settings panes to grant Full Disk Access, Contacts, and Local Network permissions
+
+After setup, the wizard does not reappear.
+
+> **Gatekeeper note**: Because this build is ad-hoc signed (no Apple Developer cert), the first launch will show "AutoMsg can't be opened because Apple cannot check it for malicious software." Right-click `AutoMsg.app` → **Open** → click **Open** in the dialog. macOS remembers this choice.
+
 ## Requirements
 
 - macOS 14+
-- Xcode (full IDE, not just CLI tools)
-- [Ollama](https://ollama.com) running locally with `llama3.2:3b` (or any conversational model)
-- Full Disk Access granted to AutoMsg.app (so it can read `~/Library/Messages/chat.db`)
-- Contacts permission
+- ~3 GB disk (Ollama + model)
+- iMessage / Messages.app set up on this Mac
+- For SMS auto-reply: enable **Text Message Forwarding** on your iPhone (Settings → Messages → Text Message Forwarding → toggle on for this Mac)
 
-## Building
+## Building from source
+
+Need the full Xcode IDE installed (not just CLI tools).
 
 ```bash
 cd AutoMsg
-bash build.sh
+bash build.sh                  # builds AutoMsg.app
 open AutoMsg.app
-```
 
-The build script compiles the Swift sources, creates the .app bundle, generates the icon, and writes the Info.plist.
+# Or to package as DMG:
+bash Scripts/build_dmg.sh      # produces AutoMsg.dmg
+```
 
 ## Architecture
 

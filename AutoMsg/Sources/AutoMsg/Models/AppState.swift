@@ -57,6 +57,7 @@ final class AppState: ObservableObject {
     @Published var remoteServerEnabled: Bool = false
     @Published var remoteServerRunning: Bool = false
     @Published var remoteToken: String = ""
+    @Published var setupComplete: Bool = Persistence.setupComplete
     private var iMessageHandles: Set<String> = []
     private var remoteServer: RemoteServer?
 
