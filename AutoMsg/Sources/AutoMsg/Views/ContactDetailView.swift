@@ -8,6 +8,14 @@ struct ContactDetailView: View {
     @State private var editableDraft: String = ""
     @State private var refreshTimer: Timer?
     @State private var isLoadingMessages: Bool = false
+    @State private var lastRefreshAt: Date = Date()
+
+    private var lastRefreshLabel: String {
+        let secs = Int(Date().timeIntervalSince(lastRefreshAt))
+        if secs < 5 { return "just now" }
+        if secs < 60 { return "\(secs)s ago" }
+        return "\(secs / 60)m ago"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,14 +30,54 @@ struct ContactDetailView: View {
                     .padding(.top, 12)
             }
 
-            // Only the message thread scrolls
+            // Pinned thread header with refresh button (does not scroll)
+            HStack {
+                Text("Recent Messages")
+                    .font(.headline)
+                    .foregroundColor(.secondary)
+                if isLoadingMessages {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .padding(.leading, 4)
+                }
+                Spacer()
+                Text(lastRefreshLabel)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Button {
+                    loadMessages()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Refresh messages")
+            }
+            .padding(.horizontal)
+            .padding(.top, 12)
+            .padding(.bottom, 4)
+
+            // Only the message thread scrolls (no header, no activity in scroll)
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(spacing: 16) {
-                        threadSection
+                    VStack(spacing: 12) {
+                        if messages.isEmpty {
+                            Text("No messages found")
+                                .foregroundColor(.secondary)
+                                .italic()
+                                .padding(.top, 30)
+                        } else {
+                            ForEach(messages) { msg in
+                                MessageBubble(message: msg)
+                                    .id(msg.id)
+                            }
+                        }
                         activitySection
+                        Color.clear.frame(height: 1).id("bottom")
                     }
-                    .padding()
+                    .padding(.horizontal)
+                    .padding(.bottom, 12)
                 }
                 .onChange(of: messages.count) {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -69,7 +117,8 @@ struct ContactDetailView: View {
 
     private func startAutoRefresh() {
         refreshTimer?.invalidate()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { _ in
+        // Tighter polling — 2 seconds — so newly arrived/sent messages show up fast
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
             loadMessages()
         }
     }
@@ -142,13 +191,28 @@ struct ContactDetailView: View {
                 isGenerating: appState.isGeneratingDraft,
                 onSend: {
                     Task {
+                        let sentText = editableDraft
                         if let idx = appState.contacts.firstIndex(where: { $0.id == contact.id }) {
                             appState.contacts[idx].currentDraft = editableDraft
                         }
                         await appState.sendDraft(for: contact.id)
-                        // Wait briefly for chat.db to commit, then refresh thread
-                        try? await Task.sleep(nanoseconds: 600_000_000)
-                        loadMessages()
+
+                        // Optimistic insert so the user sees the message immediately
+                        let optimistic = ChatMessage(
+                            id: Int64.max - Int64(messages.count),
+                            text: sentText,
+                            isFromMe: true,
+                            date: Date(),
+                            contactID: contact.handles.first ?? "",
+                            chatIdentifier: "",
+                            service: "iMessage",
+                            hasAttachment: false,
+                            attachmentInfo: nil
+                        )
+                        messages.append(optimistic)
+
+                        // Poll chat.db for the real row, replacing the optimistic one when it arrives
+                        await pollUntilFound(text: sentText, deadlineSeconds: 8)
                     }
                 },
                 onRegenerate: {
@@ -158,40 +222,6 @@ struct ContactDetailView: View {
         }
     }
 
-    private var threadSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Recent Messages")
-                    .font(.headline)
-                    .foregroundColor(.secondary)
-                Spacer()
-                Button {
-                    loadMessages()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.caption)
-                }
-                .buttonStyle(.borderless)
-                .help("Refresh")
-            }
-
-            if messages.isEmpty {
-                Text("No messages found")
-                    .foregroundColor(.secondary)
-                    .italic()
-            } else {
-                // Display oldest at top, newest at bottom (like Messages.app)
-                // The fetcher returns oldest→newest already (reversed at the SQL layer)
-                ForEach(messages) { msg in
-                    MessageBubble(message: msg)
-                        .id(msg.id)
-                }
-                Color.clear
-                    .frame(height: 1)
-                    .id("bottom")
-            }
-        }
-    }
 
     @ViewBuilder
     private var activitySection: some View {
@@ -249,12 +279,34 @@ struct ContactDetailView: View {
         loadMessages()
     }
 
+    private func pollUntilFound(text: String, deadlineSeconds: Int) async {
+        // Poll every 500ms up to deadline. Each poll opens a fresh SQLite connection
+        // (ChatDatabaseService now does that), so we'll see WAL commits as they land.
+        let needle = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        for _ in 0..<(deadlineSeconds * 2) {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !contact.handles.isEmpty,
+                  let fresh = try? appState.dbService.fetchUnifiedHistory(forHandles: contact.handles, limit: 30) else {
+                continue
+            }
+            // Check if our sent message is now in the real database
+            let found = fresh.contains { $0.isFromMe && $0.text.contains(needle) && $0.date.timeIntervalSinceNow > -30 }
+            messages = fresh
+            if found { return }
+        }
+        // Fallback: ensure thread is at least refreshed even if exact match not found
+        loadMessages()
+    }
+
     private func loadMessages() {
         guard !isLoadingMessages else { return }
         isLoadingMessages = true
         let handles = contact.handles
         Task {
-            defer { isLoadingMessages = false }
+            defer {
+                isLoadingMessages = false
+                lastRefreshAt = Date()
+            }
             guard !handles.isEmpty else {
                 messages = []
                 return

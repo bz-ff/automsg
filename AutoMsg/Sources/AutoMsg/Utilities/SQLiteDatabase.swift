@@ -68,6 +68,13 @@ final class SQLiteDatabase {
                     row[name] = sqlite3_column_double(stmt, i)
                 case SQLITE_TEXT:
                     row[name] = String(cString: sqlite3_column_text(stmt, i))
+                case SQLITE_BLOB:
+                    let len = Int(sqlite3_column_bytes(stmt, i))
+                    if let bytes = sqlite3_column_blob(stmt, i), len > 0 {
+                        row[name] = Data(bytes: bytes, count: len)
+                    } else {
+                        row[name] = Data()
+                    }
                 case SQLITE_NULL:
                     row[name] = NSNull()
                 default:

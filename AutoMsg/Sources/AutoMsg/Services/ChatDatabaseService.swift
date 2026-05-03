@@ -19,7 +19,7 @@ final class ChatDatabaseService {
     func fetchNewMessages(afterROWID lastROWID: Int64) throws -> [ChatMessage] {
         let database = try ensureOpen()
         let sql = """
-        SELECT m.ROWID, m.text, m.date, m.is_from_me, h.id as contact_id, c.chat_identifier,
+        SELECT m.ROWID, m.text, m.attributedBody, m.date, m.is_from_me, h.id as contact_id, c.chat_identifier,
                COALESCE(m.service, h.service, '') as service,
                m.cache_has_attachments,
                (SELECT GROUP_CONCAT(att.transfer_name, ', ')
@@ -34,7 +34,7 @@ final class ChatDatabaseService {
           AND m.is_from_me = 0
           AND c.style = 45
           AND m.associated_message_type = 0
-          AND (m.text IS NOT NULL OR m.cache_has_attachments = 1)
+          AND (m.text IS NOT NULL OR m.attributedBody IS NOT NULL OR m.cache_has_attachments = 1)
         ORDER BY m.ROWID ASC
         """
         let rows = try database.query(sql, params: [lastROWID])
@@ -44,7 +44,7 @@ final class ChatDatabaseService {
     func fetchConversationHistory(chatIdentifier: String, limit: Int = 20) throws -> [ChatMessage] {
         let database = try ensureOpen()
         let sql = """
-        SELECT m.ROWID, m.text, m.date, m.is_from_me, h.id as contact_id, c.chat_identifier,
+        SELECT m.ROWID, m.text, m.attributedBody, m.date, m.is_from_me, h.id as contact_id, c.chat_identifier,
                COALESCE(m.service, h.service, '') as service,
                m.cache_has_attachments,
                (SELECT GROUP_CONCAT(att.transfer_name, ', ')
@@ -57,7 +57,7 @@ final class ChatDatabaseService {
         LEFT JOIN handle h ON m.handle_id = h.ROWID
         WHERE c.chat_identifier = ?
           AND m.associated_message_type = 0
-          AND (m.text IS NOT NULL OR m.cache_has_attachments = 1)
+          AND (m.text IS NOT NULL OR m.attributedBody IS NOT NULL OR m.cache_has_attachments = 1)
         ORDER BY m.date DESC
         LIMIT ?
         """
@@ -122,8 +122,9 @@ final class ChatDatabaseService {
         let database = try ensureOpen()
 
         let placeholders = Array(repeating: "?", count: handles.count).joined(separator: ",")
+        // Include messages where text is in attributedBody (modern iMessage/RCS format).
         let sql = """
-        SELECT DISTINCT m.ROWID, m.text, m.date, m.is_from_me,
+        SELECT DISTINCT m.ROWID, m.text, m.attributedBody, m.date, m.is_from_me,
                (SELECT h2.id FROM handle h2 WHERE h2.ROWID = m.handle_id) as contact_id,
                (SELECT c2.chat_identifier FROM chat c2
                 JOIN chat_message_join cmj2 ON cmj2.chat_id = c2.ROWID
@@ -147,7 +148,7 @@ final class ChatDatabaseService {
               AND c.style = 45
         )
           AND m.associated_message_type = 0
-          AND (m.text IS NOT NULL OR m.cache_has_attachments = 1)
+          AND (m.text IS NOT NULL OR m.attributedBody IS NOT NULL OR m.cache_has_attachments = 1)
         ORDER BY m.date DESC
         LIMIT ?
         """
@@ -195,7 +196,13 @@ final class ChatDatabaseService {
             return nil
         }
 
-        let text = (row["text"] as? String) ?? ""
+        var text = (row["text"] as? String) ?? ""
+        // Modern iMessage/RCS stores message text in attributedBody (NSKeyedArchiver typedstream blob).
+        // If plain text is empty, try extracting from there.
+        if text.isEmpty, let blob = row["attributedBody"] as? Data, !blob.isEmpty {
+            text = extractTextFromAttributedBody(blob)
+        }
+
         let contactID = (row["contact_id"] as? String) ?? ""
 
         let unixTime = TimeInterval(dateVal) / 1_000_000_000.0 + coreDataEpoch
@@ -218,5 +225,81 @@ final class ChatDatabaseService {
             hasAttachment: hasAttach,
             attachmentInfo: attachmentNames
         )
+    }
+
+    /// Extracts plain text from a typedstream-encoded NSAttributedString blob.
+    /// The format starts with "streamtyped" header. The string content is preceded by
+    /// a length-prefixed marker. We scan for the readable string.
+    private static func extractTextFromAttributedBody(_ data: Data) -> String {
+        // Strategy 1: try NSUnarchiver (legacy typedstream) — works on macOS for these blobs.
+        if let obj = try? NSUnarchiver.unarchiveObject(with: data) {
+            if let attributed = obj as? NSAttributedString { return attributed.string }
+            if let s = obj as? String { return s }
+        }
+
+        // Strategy 2: byte-pattern scan as a fallback. The typedstream encodes the string
+        // after marker bytes that include "NSString" or "NSMutableString" + length.
+        // We look for the "+" byte (0x2B) followed by length prefix bytes, then UTF-8 text.
+        let bytes = [UInt8](data)
+        guard let stringPattern = "NSString".data(using: .utf8) else { return "" }
+        let needle = [UInt8](stringPattern)
+
+        var i = 0
+        while i < bytes.count - needle.count {
+            // Find "NSString" marker
+            if Array(bytes[i..<(i + needle.count)]) == needle {
+                // Skip past the marker and class encoding bytes; the next length-prefixed string follows
+                var j = i + needle.count
+                // Walk forward looking for a "+" type marker (0x2B) which precedes a long string,
+                // or "\x81" / "\x84" length bytes, or just look for printable ASCII run.
+                while j < bytes.count - 4 {
+                    let b = bytes[j]
+                    if b == 0x2B {
+                        // Long string: next byte(s) encode the length
+                        // Format: 0x2B <length-encoding> <utf8-bytes>
+                        // For length < 0xff: 1 byte. For >= 0xff: 0xff followed by 4 bytes (LE int32)
+                        var lenStart = j + 1
+                        var length: Int
+                        if bytes[lenStart] == 0x81 {
+                            // 16-bit length
+                            length = Int(bytes[lenStart + 1]) | (Int(bytes[lenStart + 2]) << 8)
+                            lenStart += 3
+                        } else if bytes[lenStart] == 0x82 {
+                            length = Int(bytes[lenStart + 1]) | (Int(bytes[lenStart + 2]) << 8) | (Int(bytes[lenStart + 3]) << 16) | (Int(bytes[lenStart + 4]) << 24)
+                            lenStart += 5
+                        } else {
+                            length = Int(bytes[lenStart])
+                            lenStart += 1
+                        }
+                        if length > 0 && lenStart + length <= bytes.count {
+                            let stringBytes = Array(bytes[lenStart..<(lenStart + length)])
+                            if let result = String(bytes: stringBytes, encoding: .utf8), !result.isEmpty {
+                                return result
+                            }
+                        }
+                        break
+                    }
+                    if b < 0x20 || b > 0x7E { j += 1; continue }
+                    // Found ASCII run — try reading until non-printable
+                    var endRun = j
+                    while endRun < bytes.count && bytes[endRun] >= 0x20 {
+                        endRun += 1
+                    }
+                    if endRun - j > 1 {
+                        if let result = String(bytes: bytes[j..<endRun], encoding: .utf8) {
+                            // Skip over class names that aren't actual content
+                            if !result.hasPrefix("NS") && !result.hasPrefix("__kIM") && result.count > 1 {
+                                return result
+                            }
+                        }
+                    }
+                    j = endRun + 1
+                }
+                break
+            }
+            i += 1
+        }
+
+        return ""
     }
 }
