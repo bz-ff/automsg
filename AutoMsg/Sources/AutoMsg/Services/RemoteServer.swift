@@ -121,10 +121,15 @@ final class RemoteServer {
                     "enabled": c.isEnabled,
                     "hasHistory": c.hasHistory,
                     "hasDraft": (c.currentDraft?.isEmpty == false),
-                    "preferredHandle": c.preferredHandle as Any
+                    "preferredHandle": c.preferredHandle as Any,
+                    "smartMode": c.smartMode.rawValue,
+                    "hasMemory": !c.memory.isEmpty
                 ]
             }
-            return .json(200, ["contacts": payload])
+            return .json(200, [
+                "contacts": payload,
+                "pendingReplies": appState.monitor.pendingAutoReplies
+            ])
 
         case ("GET", "/api/activity"):
             let payload = appState.activityLog.prefix(50).map { e -> [String: Any] in
@@ -163,8 +168,26 @@ final class RemoteServer {
                     "enabled": c.isEnabled,
                     "draft": c.currentDraft as Any,
                     "preferredHandle": c.preferredHandle as Any,
+                    "smartMode": c.smartMode.rawValue,
+                    "memory": [
+                        "summary": c.memory.summary,
+                        "facts": c.memory.facts,
+                        "openLoops": c.memory.openLoops,
+                        "preferences": c.memory.preferences
+                    ],
                     "messages": messages
                 ])
+            }
+
+            if req.method == "POST", req.path.hasSuffix("/mode") {
+                let id = decodeID(req.path.replacingOccurrences(of: "/api/contacts/", with: "").replacingOccurrences(of: "/mode", with: ""))
+                let body = (try? JSONSerialization.jsonObject(with: req.body) as? [String: Any]) ?? [:]
+                if let modeStr = body["mode"] as? String,
+                   let mode = Contact.SmartMode(rawValue: modeStr) {
+                    appState.setSmartMode(mode, for: id)
+                    return .json(200, ["mode": mode.rawValue])
+                }
+                return .json(400, ["error": "invalid mode"])
             }
 
             if req.method == "POST", req.path.hasSuffix("/toggle") {

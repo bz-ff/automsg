@@ -112,6 +112,48 @@ header {
 }
 .contact.enabled .status-dot { background: var(--green); }
 .history-mark { font-size: 12px; opacity: 0.5; }
+.mode-pill {
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  margin-left: 4px;
+  background: var(--bg-3);
+  color: var(--text-2);
+}
+.mode-pill.auto { background: rgba(255,159,10,0.2); color: var(--orange); }
+.mode-pill.smart { background: rgba(74,140,255,0.2); color: var(--accent); }
+.mode-pill.focus { background: rgba(176,131,255,0.2); color: #b083ff; }
+.mode-pill.draft { background: rgba(52,199,89,0.2); color: var(--green); }
+.pending-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--orange);
+  color: black;
+  margin-left: 6px;
+  font-weight: 600;
+}
+.mem-pill {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: rgba(176,131,255,0.2);
+  color: #b083ff;
+  margin-left: 4px;
+}
+.mem-section {
+  margin: 12px 0;
+  padding: 12px;
+  background: var(--bg-2);
+  border-radius: 10px;
+  border-left: 3px solid #b083ff;
+}
+.mem-section h4 { margin: 0 0 6px; font-size: 12px; color: #b083ff; }
+.mem-section ul { margin: 4px 0; padding-left: 18px; }
+.mem-section li { font-size: 13px; margin-bottom: 2px; color: var(--text-2); }
+.mem-section .summary { font-size: 13px; margin-bottom: 8px; color: var(--text); }
 .detail-overlay {
   position: fixed; inset: 0; background: var(--bg);
   z-index: 100; overflow-y: auto;
@@ -252,7 +294,9 @@ async function loadContacts() {
   try {
     const data = await api('/api/contacts');
     state.contacts = data.contacts || [];
+    state.pendingReplies = data.pendingReplies || 0;
     renderList();
+    renderHeader();
   } catch (e) { toast('Failed to load contacts'); }
 }
 
@@ -261,8 +305,10 @@ function renderHeader() {
   document.getElementById('dot-ollama').className = 'dot ' + (s.ollama ? 'on' : 'off');
   document.getElementById('dot-msgs').className = 'dot ' + (s.messages ? 'on' : 'off');
   document.getElementById('dot-monitor').className = 'dot ' + (s.monitor ? 'on' : 'off');
-  document.getElementById('status-line').textContent =
-    `${s.enabledCount || 0} of ${s.contactCount || 0} contacts enabled` + (s.diskAccess === false ? ' · Full Disk Access required' : '');
+  let statusText = `${s.enabledCount || 0} of ${s.contactCount || 0} contacts enabled`;
+  if (state.pendingReplies > 0) statusText += ` · ${state.pendingReplies} reply pending`;
+  if (s.diskAccess === false) statusText += ' · Full Disk Access required';
+  document.getElementById('status-line').textContent = statusText;
   document.getElementById('global-toggle').classList.toggle('on', !!s.globalEnabled);
 }
 
@@ -282,21 +328,54 @@ function renderList() {
     return a.name.localeCompare(b.name);
   });
   list.innerHTML = filtered.length
-    ? filtered.map(c => `
+    ? filtered.map(c => {
+        const modeLabel = modeLabelText(c.smartMode);
+        const modeClass = c.smartMode || '';
+        return `
       <div class="contact ${c.enabled ? 'enabled' : ''}" data-id="${escapeHTML(c.id)}">
         <div class="avatar">${initials(c.name)}</div>
         <div class="name">
-          <div class="n">${escapeHTML(c.name)} ${c.hasHistory ? '<span class="history-mark">💬</span>' : ''}</div>
-          <div class="sub">${escapeHTML((c.handles || [])[0] || '')}${c.handles && c.handles.length > 1 ? ' +' + (c.handles.length - 1) : ''}</div>
+          <div class="n">${escapeHTML(c.name)} ${c.hasHistory ? '<span class="history-mark">💬</span>' : ''}${c.hasMemory ? '<span class="mem-pill">🧠</span>' : ''}</div>
+          <div class="sub">${escapeHTML((c.handles || [])[0] || '')}${c.handles && c.handles.length > 1 ? ' +' + (c.handles.length - 1) : ''}${c.enabled ? `<span class="mode-pill ${modeClass}">${modeLabel}</span>` : ''}</div>
         </div>
         <div class="status-dot"></div>
       </div>
-    `).join('')
+    `;
+      }).join('')
     : '<div class="empty">No contacts match</div>';
 
   list.querySelectorAll('.contact').forEach(el => {
     el.addEventListener('click', () => openDetail(el.dataset.id));
   });
+}
+
+function renderMemory(mem) {
+  if (!mem) return '';
+  const hasContent = (mem.summary && mem.summary.length) ||
+    (mem.facts && mem.facts.length) ||
+    (mem.openLoops && mem.openLoops.length) ||
+    (mem.preferences && mem.preferences.length);
+  if (!hasContent) return '';
+  return `
+    <div class="mem-section">
+      <h4>🧠 Long-term memory</h4>
+      ${mem.summary ? `<div class="summary">${escapeHTML(mem.summary)}</div>` : ''}
+      ${mem.facts && mem.facts.length ? `<strong style="font-size:11px;color:var(--text-2)">Facts</strong><ul>${mem.facts.map(f => `<li>${escapeHTML(f)}</li>`).join('')}</ul>` : ''}
+      ${mem.openLoops && mem.openLoops.length ? `<strong style="font-size:11px;color:var(--text-2)">Open loops</strong><ul>${mem.openLoops.map(f => `<li>${escapeHTML(f)}</li>`).join('')}</ul>` : ''}
+      ${mem.preferences && mem.preferences.length ? `<strong style="font-size:11px;color:var(--text-2)">Preferences</strong><ul>${mem.preferences.map(f => `<li>${escapeHTML(f)}</li>`).join('')}</ul>` : ''}
+    </div>
+  `;
+}
+
+function modeLabelText(m) {
+  switch (m) {
+    case 'alwaysAuto': return '⚡ Auto';
+    case 'moderate': return '🤖 Smart';
+    case 'focusOnly': return '🌙 Focus';
+    case 'draftOnly': return '✏️ Draft';
+    case 'off': return '🚫 Off';
+    default: return '🤖 Smart';
+  }
 }
 
 function initials(name) {
@@ -329,12 +408,24 @@ function renderDetail(d) {
     `<option value="${escapeHTML(h)}" ${h === d.preferredHandle ? 'selected' : ''}>${escapeHTML(h)}</option>`
   ).join('');
   const draft = d.draft || '';
+  const memHTML = renderMemory(d.memory);
   body.innerHTML = `
     <div class="handle-row">
       <label>Send to:</label>
       <select id="handle-select">${handlesOpts}</select>
       <button class="secondary" id="toggle-btn" style="margin-left:auto">${d.enabled ? 'Disable' : 'Enable'}</button>
     </div>
+    ${d.enabled ? `
+    <div class="handle-row">
+      <label>Mode:</label>
+      <select id="mode-select">
+        <option value="alwaysAuto" ${d.smartMode === 'alwaysAuto' ? 'selected' : ''}>⚡ Always auto</option>
+        <option value="moderate" ${(d.smartMode === 'moderate' || !d.smartMode) ? 'selected' : ''}>🤖 Smart (recommended)</option>
+        <option value="focusOnly" ${d.smartMode === 'focusOnly' ? 'selected' : ''}>🌙 Focus only</option>
+        <option value="draftOnly" ${d.smartMode === 'draftOnly' ? 'selected' : ''}>✏️ Draft only</option>
+        <option value="off" ${d.smartMode === 'off' ? 'selected' : ''}>🚫 Off</option>
+      </select>
+    </div>` : ''}
     <div class="draft-card">
       <h3>AI Draft</h3>
       <textarea id="draft-input" placeholder="Tap Regenerate to compose...">${escapeHTML(draft)}</textarea>
@@ -343,6 +434,7 @@ function renderDetail(d) {
         <button class="secondary" id="regen-btn">Regenerate</button>
       </div>
     </div>
+    ${memHTML}
     <div class="thread">
       <h3>Recent Messages</h3>
       ${(d.messages || []).map(m => `
@@ -352,6 +444,20 @@ function renderDetail(d) {
       `).join('')}
     </div>
   `;
+
+  const modeSel = document.getElementById('mode-select');
+  if (modeSel) {
+    modeSel.addEventListener('change', async (e) => {
+      const r = await fetch(`/api/contacts/${encodeURIComponent(d.id)}/mode?token=${TOKEN}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: e.target.value })
+      }).then(r => r.json());
+      if (r.error) toast('Error: ' + r.error);
+      else toast('Mode: ' + modeLabelText(r.mode));
+      loadContacts();
+    });
+  }
 
   document.getElementById('toggle-btn').addEventListener('click', async () => {
     const r = await fetch(`/api/contacts/${encodeURIComponent(d.id)}/toggle?token=${TOKEN}`, { method: 'POST' }).then(r => r.json());
