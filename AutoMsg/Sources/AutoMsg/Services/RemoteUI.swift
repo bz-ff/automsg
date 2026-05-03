@@ -458,17 +458,27 @@ async function openDetail(id) {
 function renderDetail(d) {
   document.getElementById('detail-name').textContent = d.name;
   const body = document.getElementById('detail-body');
+  const activeHandle = d.activeHandle || d.preferredHandle || (d.handles || [])[0];
   const handlesOpts = (d.handles || []).map(h =>
-    `<option value="${escapeHTML(h)}" ${h === d.preferredHandle ? 'selected' : ''}>${escapeHTML(h)}</option>`
+    `<option value="${escapeHTML(h)}" ${h === activeHandle ? 'selected' : ''}>${escapeHTML(h)}</option>`
   ).join('');
+  const isManual = !!d.preferredHandle;
+  const showSwitchHint = isManual && d.autoHandle && d.autoHandle !== d.preferredHandle;
   const draft = d.draft || '';
   const memHTML = renderMemory(d.memory);
   body.innerHTML = `
     <div class="handle-row">
       <label>Send to:</label>
       <select id="handle-select">${handlesOpts}</select>
+      ${isManual ? '<button class="secondary" id="reset-handle-btn" title="Stop overriding">↺ Auto</button>' : '<span style="font-size:11px;color:var(--text-2);background:var(--bg-3);padding:2px 6px;border-radius:4px">auto</span>'}
       <button class="secondary" id="toggle-btn" style="margin-left:auto">${d.enabled ? 'Disable' : 'Enable'}</button>
     </div>
+    ${showSwitchHint ? `
+    <div style="display:flex;align-items:center;gap:6px;padding:8px 10px;background:rgba(255,159,10,0.1);border-radius:6px;margin-bottom:10px">
+      <span style="color:var(--orange)">ⓘ</span>
+      <span style="font-size:12px;color:var(--text-2);flex:1">Most recent activity on <code>${escapeHTML(d.autoHandle)}</code></span>
+      <button class="secondary" id="switch-handle-btn" style="padding:4px 10px;font-size:12px">Switch</button>
+    </div>` : ''}
     ${d.enabled ? `
     <div class="handle-row">
       <label>Mode:</label>
@@ -509,6 +519,29 @@ function renderDetail(d) {
       }).then(r => r.json());
       if (r.error) toast('Error: ' + r.error);
       else toast('Send target: ' + r.preferredHandle);
+      openDetail(d.id);  // re-render to show Reset button
+    });
+  }
+
+  const resetBtn = document.getElementById('reset-handle-btn');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', async () => {
+      await fetch(`/api/contacts/${encodeURIComponent(d.id)}/handle/reset?token=${TOKEN}`, { method: 'POST' });
+      toast('Auto-pick restored');
+      openDetail(d.id);
+    });
+  }
+
+  const switchBtn = document.getElementById('switch-handle-btn');
+  if (switchBtn && d.autoHandle) {
+    switchBtn.addEventListener('click', async () => {
+      await fetch(`/api/contacts/${encodeURIComponent(d.id)}/handle?token=${TOKEN}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ handle: d.autoHandle })
+      });
+      toast('Switched to most recent thread');
+      openDetail(d.id);
     });
   }
 

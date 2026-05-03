@@ -152,7 +152,7 @@ struct ContactDetailView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Picker("", selection: Binding(
-                        get: { contact.preferredHandle ?? defaultHandle },
+                        get: { appState.activeHandle(for: contact) ?? contact.handles.first ?? "" },
                         set: { newVal in appState.setPreferredHandle(newVal, for: contact.id) }
                     )) {
                         ForEach(sortedHandles, id: \.self) { handle in
@@ -162,10 +162,53 @@ struct ContactDetailView: View {
                     .pickerStyle(.menu)
                     .labelsHidden()
 
+                    if contact.preferredHandle != nil {
+                        Button {
+                            appState.resetPreferredHandle(for: contact.id)
+                        } label: {
+                            Label("Reset", systemImage: "arrow.counterclockwise")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Stop overriding — auto-pick the most recent thread")
+                    } else {
+                        Text("auto")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.gray.opacity(0.15))
+                            .cornerRadius(4)
+                    }
+
                     Toggle("Allow SMS", isOn: $appState.allowSMSFallback)
                         .toggleStyle(.checkbox)
                         .controlSize(.mini)
                         .font(.caption)
+                }
+
+                // Suggestion banner: shown when user's manual pick differs from
+                // the handle that has the most recent activity.
+                if let pref = contact.preferredHandle,
+                   let auto = appState.autoPickedHandle(for: contact),
+                   pref != auto {
+                    HStack(spacing: 6) {
+                        Image(systemName: "info.circle")
+                            .foregroundColor(.orange)
+                            .font(.caption)
+                        Text("Most recent activity is on \(auto)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Button("Switch") {
+                            appState.setPreferredHandle(auto, for: contact.id)
+                        }
+                        .controlSize(.mini)
+                        Spacer()
+                    }
+                    .padding(8)
+                    .background(Color.orange.opacity(0.08))
+                    .cornerRadius(6)
                 }
 
                 HStack(spacing: 6) {

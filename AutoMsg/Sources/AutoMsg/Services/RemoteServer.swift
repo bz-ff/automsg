@@ -229,7 +229,9 @@ final class RemoteServer {
                     "handles": c.handles,
                     "enabled": c.isEnabled,
                     "draft": c.currentDraft as Any,
-                    "preferredHandle": c.preferredHandle as Any,
+                    "preferredHandle": c.preferredHandle as Any,    // user's manual pick (nullable)
+                    "activeHandle": appState.activeHandle(for: c) as Any,  // what's actually used
+                    "autoHandle": appState.autoPickedHandle(for: c) as Any, // what auto would pick
                     "smartMode": c.smartMode.rawValue,
                     "memory": [
                         "summary": c.memory.summary,
@@ -239,6 +241,12 @@ final class RemoteServer {
                     ],
                     "messages": messages
                 ])
+            }
+
+            if req.method == "POST", req.path.hasSuffix("/handle/reset") {
+                let id = decodeID(req.path.replacingOccurrences(of: "/api/contacts/", with: "").replacingOccurrences(of: "/handle/reset", with: ""))
+                appState.resetPreferredHandle(for: id)
+                return .json(200, ["preferredHandle": NSNull()])
             }
 
             if req.method == "POST", req.path.hasSuffix("/handle") {

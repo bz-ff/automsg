@@ -269,26 +269,53 @@ final class AppState: ObservableObject {
     }
 
     private func pickSendHandle(for contact: Contact) -> String? {
-        if let preferred = contact.preferredHandle {
+        // Manual user override — sticky and wins over everything
+        if let preferred = contact.preferredHandle, contact.handles.contains(preferred) {
             return preferred
         }
-        // Priority 1: handle that's confirmed iMessage-capable in chat.db
+        return autoPickedHandle(for: contact)
+    }
+
+    /// What the system would auto-select if the user hadn't explicitly picked.
+    /// Used both as the active handle when there is no preference, and to power
+    /// the "switch?" hint when the user's pick differs from the most-recent thread.
+    func autoPickedHandle(for contact: Contact) -> String? {
+        // Priority 1: most-recent thread (covers "they switched services" case)
+        if let recent = try? dbService.mostRecentActiveHandle(among: contact.handles) {
+            return recent
+        }
+        // Priority 2: confirmed iMessage-capable
         if let imessage = contact.handles.first(where: { iMessageHandles.contains($0) }) {
             return imessage
         }
-        // Priority 2: email (always iMessage on Apple devices)
+        // Priority 3: email (always iMessage on Apple)
         if let email = contact.handles.first(where: { $0.contains("@") }) {
             return email
         }
-        // Priority 3: any handle with prior chat history
+        // Priority 4: any handle with prior chat history
         for handle in contact.handles {
             if let _ = try? dbService.findChatIdentifier(forContact: handle) {
                 return handle
             }
         }
-        // Priority 4: first phone or any handle
+        // Priority 5: first phone or any handle
         return contact.handles.first(where: { $0.hasPrefix("+") || $0.first?.isNumber == true })
             ?? contact.handles.first
+    }
+
+    /// What handle is "active" right now — manual pick if set, else auto.
+    /// Used to drive the dropdown selection.
+    func activeHandle(for contact: Contact) -> String? {
+        if let preferred = contact.preferredHandle, contact.handles.contains(preferred) {
+            return preferred
+        }
+        return autoPickedHandle(for: contact)
+    }
+
+    /// Clears the manual pick so the dropdown returns to auto-select.
+    func resetPreferredHandle(for contactID: String) {
+        guard let idx = contacts.firstIndex(where: { $0.id == contactID }) else { return }
+        contacts[idx].preferredHandle = nil
     }
 
     func isIMessageCapable(_ handle: String) -> Bool {

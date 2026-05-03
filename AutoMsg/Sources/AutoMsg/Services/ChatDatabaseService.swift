@@ -85,6 +85,31 @@ final class ChatDatabaseService {
 
     /// Returns handles where iMessage is the dominant service in the last 90 days.
     /// A handle that has any iMessage row but mostly RCS/SMS shouldn't be treated as iMessage.
+    /// Returns the handle (from the given list) that was used in the
+    /// most recent message — incoming or outgoing. nil if no activity found.
+    func mostRecentActiveHandle(among handles: [String]) throws -> String? {
+        guard !handles.isEmpty else { return nil }
+        let database = try ensureOpen()
+        let placeholders = Array(repeating: "?", count: handles.count).joined(separator: ",")
+        // For each chat that includes any of these handles, find the latest message
+        // and the handle on that chat. Pick the chat with the latest message overall.
+        let sql = """
+        SELECT h.id as handle_id, MAX(m.date) as latest_date
+        FROM message m
+        JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+        JOIN chat c ON c.ROWID = cmj.chat_id
+        JOIN chat_handle_join chj ON chj.chat_id = c.ROWID
+        JOIN handle h ON h.ROWID = chj.handle_id
+        WHERE h.id IN (\(placeholders))
+          AND c.style = 45
+        GROUP BY h.id
+        ORDER BY latest_date DESC
+        LIMIT 1
+        """
+        let rows = try database.query(sql, params: handles)
+        return rows.first?["handle_id"] as? String
+    }
+
     func iMessageCapableHandles() throws -> Set<String> {
         let database = try ensureOpen()
         // Compare iMessage message count vs total recent messages per handle id.
