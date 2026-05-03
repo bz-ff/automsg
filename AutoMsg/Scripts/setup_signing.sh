@@ -2,88 +2,78 @@
 # One-time setup: create a stable self-signed code-signing identity so AutoMsg
 # rebuilds keep their Full Disk Access / Contacts / Local Network grants.
 #
-# WHY: macOS TCC (privacy permissions) keys grants to the app's code-signing
-# identity. Ad-hoc signing (`codesign -s -`) produces a different hash every
-# build, so each rebuild looks like a brand-new app and macOS asks for
-# permissions again. Signing with a STABLE identity fixes this.
+# WHY: macOS TCC keys grants on the app's code-signing identity hash. Ad-hoc
+# signing produces a new hash every build, so each rebuild looks like a brand
+# new app and macOS forgets the grants. A stable self-signed identity solves it.
 #
-# This script walks you through creating the identity using the built-in
-# macOS Certificate Assistant (a one-time, ~30-second process).
+# This script is non-interactive — it creates the cert, imports it, and trusts
+# it for code signing in the login keychain. No sudo or GUI required.
 set -e
 
 CERT_NAME="AutoMsg Self-Signed"
+KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 
 if security find-identity -v -p codesigning 2>&1 | grep -q "$CERT_NAME"; then
-    echo "Identity '$CERT_NAME' already exists. You're set."
+    echo "Identity '$CERT_NAME' already exists. Nothing to do."
     security find-identity -v -p codesigning | grep "$CERT_NAME"
     exit 0
 fi
 
-cat <<'EOF'
-============================================================
-AutoMsg Code Signing — One-Time Setup
-============================================================
+echo "Creating self-signed code-signing identity: $CERT_NAME"
 
-To stop macOS from asking you to re-grant Full Disk Access on every
-rebuild, we need a stable self-signed code-signing identity.
+TMPDIR=$(mktemp -d)
+trap "rm -rf $TMPDIR" EXIT
 
-The most reliable way to create one is via macOS Certificate Assistant.
-I'll open it for you. Follow these steps:
+cat > "$TMPDIR/cert.cfg" <<'EOF'
+[ req ]
+distinguished_name = req_dn
+prompt = no
+x509_extensions = v3_ca
 
-  1. Choose menu: Keychain Access → Certificate Assistant →
-     Create a Certificate...
-     (I'll open this menu for you in 3 seconds.)
+[ req_dn ]
+CN = AutoMsg Self-Signed
 
-  2. In the dialog:
-     - Name:                 AutoMsg Self-Signed
-     - Identity Type:        Self Signed Root
-     - Certificate Type:     Code Signing
-     - Check "Let me override defaults"
-     - Click Continue → Continue → set validity to 3650 days
-     - Click Continue through the rest, accept defaults
-     - Final dialog: choose "login" keychain
-
-  3. Once created, return here and press ENTER to verify.
-
-Press ENTER to open Keychain Access...
+[ v3_ca ]
+basicConstraints = critical, CA:false
+keyUsage = critical, digitalSignature
+extendedKeyUsage = critical, codeSigning
+subjectKeyIdentifier = hash
 EOF
-read -r
 
-# Open Keychain Access, then trigger the menu via osascript
-open -a "Keychain Access"
-sleep 2
+# 1. Generate self-signed cert + private key (10-year validity)
+openssl req -x509 -newkey rsa:2048 -nodes \
+    -keyout "$TMPDIR/key.pem" -out "$TMPDIR/cert.pem" \
+    -days 3650 -config "$TMPDIR/cert.cfg" 2>/dev/null
 
-osascript <<'OSA' 2>/dev/null || true
-tell application "Keychain Access" to activate
-delay 1
-tell application "System Events"
-    tell process "Keychain Access"
-        click menu item "Create a Certificate..." of menu 1 of menu item "Certificate Assistant" of menu 1 of menu bar item "Keychain Access" of menu bar 1
-    end tell
-end tell
-OSA
+# 2. Bundle as PKCS#12 (legacy format for consistent macOS handling)
+P12_PASS="automsg-$$"
+openssl pkcs12 -export -legacy \
+    -out "$TMPDIR/cert.p12" \
+    -inkey "$TMPDIR/key.pem" \
+    -in "$TMPDIR/cert.pem" \
+    -name "$CERT_NAME" \
+    -passout pass:"$P12_PASS" 2>/dev/null
 
-echo ""
-echo "When you're done creating the certificate, press ENTER to verify..."
-read -r
+# 3. Import into login keychain, allowing codesign to use the key non-interactively
+security import "$TMPDIR/cert.p12" -k "$KEYCHAIN" -P "$P12_PASS" \
+    -T /usr/bin/codesign -T /usr/bin/security -A
 
+# 4. Add trust settings to the LOGIN keychain (no sudo required)
+#    -p codeSign means "trust this cert for code signing only"
+security add-trusted-cert -p codeSign -k "$KEYCHAIN" "$TMPDIR/cert.pem"
+
+# Verify
 if security find-identity -v -p codesigning 2>&1 | grep -q "$CERT_NAME"; then
     echo ""
-    echo "✓ Identity '$CERT_NAME' is now available for signing."
+    echo "✓ Identity '$CERT_NAME' is now available."
     security find-identity -v -p codesigning | grep "$CERT_NAME"
     echo ""
-    echo "From now on, build.sh and build_dmg.sh will use this identity"
-    echo "automatically. Your Full Disk Access grant will persist across rebuilds."
-    echo ""
-    echo "IMPORTANT: After the next build, you'll need to grant Full Disk Access"
-    echo "ONE more time (the new signature differs from the previous ad-hoc one)."
-    echo "After that, the grant will stick across all future rebuilds."
+    echo "Future builds will automatically sign with this identity. After your"
+    echo "next rebuild, you'll need to grant Full Disk Access ONE more time"
+    echo "(because the new signature differs from previous ad-hoc ones). After"
+    echo "that, all subsequent rebuilds will inherit the grant."
 else
-    echo ""
-    echo "⚠ Could not find '$CERT_NAME' as a code-signing identity yet."
-    echo "  Open Keychain Access, find the cert, and verify:"
-    echo "    - It's in the 'login' keychain"
-    echo "    - Its trust settings include 'Code Signing: Always Trust'"
-    echo "      (right-click → Get Info → Trust → Code Signing → Always Trust)"
-    echo "  Then re-run this script."
+    echo "⚠ Cert imported but not visible as a codesigning identity yet."
+    echo "  Try running this script again, or check Keychain Access manually."
+    exit 1
 fi
