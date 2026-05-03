@@ -218,6 +218,33 @@ button:disabled { opacity: 0.4; }
 }
 .toast.show { opacity: 1; }
 .refresh { padding: 8px 12px; cursor: pointer; color: var(--text-2); }
+.settings-overlay {
+  position: fixed; inset: 0; background: var(--bg);
+  z-index: 90; overflow-y: auto;
+  padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);
+  display: none; flex-direction: column;
+}
+.settings-overlay.open { display: flex; }
+.model-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  background: var(--bg-2); border-radius: 10px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+.model-row.active { background: rgba(74,140,255,0.15); border: 1px solid var(--accent); }
+.model-row .radio {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid var(--text-2); flex-shrink: 0;
+}
+.model-row.active .radio { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 3px var(--bg-2); }
+.model-row .info { flex: 1; }
+.model-row .name { font-family: ui-monospace, "SF Mono", Monaco, monospace; font-size: 14px; }
+.model-row .meta { font-size: 11px; color: var(--text-2); margin-top: 2px; }
+.gear-btn {
+  background: none; border: 0; color: var(--text-2);
+  font-size: 18px; cursor: pointer; padding: 4px 8px;
+}
 </style>
 </head>
 <body>
@@ -225,10 +252,11 @@ button:disabled { opacity: 0.4; }
   <header>
     <div class="title-row">
       <div class="title">AutoMsg</div>
-      <div style="display: flex; gap: 6px;">
+      <div style="display: flex; gap: 6px; align-items: center;">
         <span class="status-pill"><span class="dot" id="dot-ollama"></span> Ollama</span>
         <span class="status-pill"><span class="dot" id="dot-msgs"></span> Msgs</span>
         <span class="status-pill"><span class="dot" id="dot-monitor"></span> Monitor</span>
+        <button class="gear-btn" id="settings-btn" title="Settings">⚙</button>
       </div>
     </div>
     <div class="global-toggle">
@@ -252,6 +280,26 @@ button:disabled { opacity: 0.4; }
   </div>
 
   <div class="list" id="contact-list"></div>
+
+  <div class="settings-overlay" id="settings">
+    <div class="detail-header">
+      <div class="back-btn" id="settings-back">‹ Back</div>
+      <div class="detail-name">Settings</div>
+    </div>
+    <div class="detail-body">
+      <h3 style="font-size:13px;color:var(--text-2);margin:0 0 10px;font-weight:600">AI MODEL</h3>
+      <div id="active-model" style="margin-bottom:12px;font-size:13px;color:var(--text-2)"></div>
+      <div id="model-list"></div>
+      <p style="font-size:12px;color:var(--text-2);margin-top:14px;line-height:1.4">
+        Tip: 7B+ models give better style mimicry. Recommended: <code>qwen2.5:7b</code>.
+        Changing the model requires restarting AutoMsg on the Mac.
+      </p>
+      <p style="font-size:12px;color:var(--text-2);line-height:1.4">
+        New models? Run <code style="background:var(--bg-3);padding:2px 4px;border-radius:3px">ollama pull &lt;name&gt;</code> in Terminal on the Mac, then refresh.
+      </p>
+      <button class="secondary" id="refresh-models" style="margin-top:8px">Refresh list</button>
+    </div>
+  </div>
 
   <div class="detail-overlay" id="detail">
     <div class="detail-header">
@@ -529,6 +577,61 @@ document.getElementById('search').addEventListener('input', e => {
 document.getElementById('chip-all').classList.add('active');
 
 document.getElementById('refresh-btn').addEventListener('click', () => { loadContacts(); loadStatus(); });
+
+document.getElementById('settings-btn').addEventListener('click', openSettings);
+document.getElementById('settings-back').addEventListener('click', () => {
+  document.getElementById('settings').classList.remove('open');
+});
+document.getElementById('refresh-models').addEventListener('click', loadModels);
+
+async function openSettings() {
+  document.getElementById('settings').classList.add('open');
+  loadModels();
+}
+
+async function loadModels() {
+  document.getElementById('model-list').innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const data = await api('/api/models');
+    if (data.error) {
+      document.getElementById('model-list').innerHTML = `<div class="empty">${escapeHTML(data.error)}</div>`;
+      return;
+    }
+    document.getElementById('active-model').innerHTML = `Active: <code style="background:var(--bg-3);padding:2px 6px;border-radius:4px;color:var(--green)">${escapeHTML(data.active)}</code>`;
+    const list = document.getElementById('model-list');
+    if (!data.models || !data.models.length) {
+      list.innerHTML = '<div class="empty">No models installed</div>';
+      return;
+    }
+    list.innerHTML = data.models.map(m => `
+      <div class="model-row ${m.name === data.active ? 'active' : ''}" data-name="${escapeHTML(m.name)}">
+        <div class="radio"></div>
+        <div class="info">
+          <div class="name">${escapeHTML(m.name)}</div>
+          <div class="meta">${m.sizeGB.toFixed(1)} GB · ${escapeHTML(m.modified)}</div>
+        </div>
+      </div>
+    `).join('');
+    list.querySelectorAll('.model-row').forEach(row => {
+      row.addEventListener('click', () => selectModel(row.dataset.name));
+    });
+  } catch (e) {
+    document.getElementById('model-list').innerHTML = `<div class="empty">Failed: ${escapeHTML(e.message)}</div>`;
+  }
+}
+
+async function selectModel(name) {
+  const r = await fetch('/api/models/active?token=' + TOKEN, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name })
+  }).then(r => r.json());
+  if (r.error) toast('Error: ' + r.error);
+  else {
+    toast('Saved · restart AutoMsg on the Mac to apply');
+    loadModels();
+  }
+}
 
 document.getElementById('global-toggle').addEventListener('click', async () => {
   const r = await fetch('/api/global/toggle?token=' + TOKEN, { method: 'POST' }).then(r => r.json());

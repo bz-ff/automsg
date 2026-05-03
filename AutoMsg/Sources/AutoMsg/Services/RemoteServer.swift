@@ -131,6 +131,42 @@ final class RemoteServer {
                 "pendingReplies": appState.monitor.pendingAutoReplies
             ])
 
+        case ("GET", "/api/models"):
+            // Proxy Ollama's /api/tags so the mobile UI can show installed models + active one
+            let tagsURL = URL(string: "http://localhost:11434/api/tags")!
+            do {
+                let (data, _) = try await URLSession.shared.data(from: tagsURL)
+                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                let raw = (json?["models"] as? [[String: Any]]) ?? []
+                let parsed = raw.compactMap { dict -> [String: Any]? in
+                    guard let name = dict["name"] as? String else { return nil }
+                    let size = (dict["size"] as? Int64) ?? 0
+                    let mod = (dict["modified_at"] as? String) ?? ""
+                    return [
+                        "name": name,
+                        "sizeGB": Double(size) / 1_073_741_824.0,
+                        "modified": String(mod.prefix(10))
+                    ]
+                }.sorted { (($0["name"] as? String) ?? "") < (($1["name"] as? String) ?? "") }
+                return .json(200, [
+                    "active": Persistence.modelName,
+                    "models": parsed
+                ])
+            } catch {
+                return .json(500, ["error": "Couldn't reach Ollama: \(error.localizedDescription)"])
+            }
+
+        case ("POST", "/api/models/active"):
+            let body = (try? JSONSerialization.jsonObject(with: req.body) as? [String: Any]) ?? [:]
+            guard let name = body["name"] as? String, !name.isEmpty else {
+                return .json(400, ["error": "missing name"])
+            }
+            Persistence.modelName = name
+            return .json(200, [
+                "active": name,
+                "note": "Restart AutoMsg on the Mac for the change to take effect"
+            ])
+
         case ("GET", "/api/activity"):
             let payload = appState.activityLog.prefix(50).map { e -> [String: Any] in
                 [
