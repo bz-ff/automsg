@@ -489,6 +489,20 @@ function renderDetail(d) {
         <option value="draftOnly" ${d.smartMode === 'draftOnly' ? 'selected' : ''}>✏️ Draft only</option>
         <option value="off" ${d.smartMode === 'off' ? 'selected' : ''}>🚫 Off</option>
       </select>
+    </div>
+    <div class="handle-row">
+      <label>Relationship:</label>
+      <select id="rel-select">
+        <option value="unknown" ${(d.relationship || 'unknown') === 'unknown' ? 'selected' : ''}>❔ Unknown</option>
+        <option value="close_friend" ${d.relationship === 'close_friend' ? 'selected' : ''}>🤝 Close friend</option>
+        <option value="friend" ${d.relationship === 'friend' ? 'selected' : ''}>👋 Friend</option>
+        <option value="family" ${d.relationship === 'family' ? 'selected' : ''}>💛 Family</option>
+        <option value="romantic" ${d.relationship === 'romantic' ? 'selected' : ''}>❤️ Romantic</option>
+        <option value="acquaintance" ${d.relationship === 'acquaintance' ? 'selected' : ''}>👤 Acquaintance</option>
+        <option value="professional" ${d.relationship === 'professional' ? 'selected' : ''}>💼 Professional</option>
+        <option value="service" ${d.relationship === 'service' ? 'selected' : ''}>🧾 Service</option>
+      </select>
+      ${d.relationshipUserOverride ? '<button class="secondary" id="reset-rel-btn" title="Let memory refresh re-detect">↺</button>' : '<span style="font-size:11px;color:var(--text-2);background:var(--bg-3);padding:2px 6px;border-radius:4px">auto</span>'}
     </div>` : ''}
     <div class="draft-card">
       <h3>AI Draft</h3>
@@ -556,6 +570,27 @@ function renderDetail(d) {
       if (r.error) toast('Error: ' + r.error);
       else toast('Mode: ' + modeLabelText(r.mode));
       loadContacts();
+    });
+  }
+
+  const relSel = document.getElementById('rel-select');
+  if (relSel) {
+    relSel.addEventListener('change', async (e) => {
+      const r = await fetch(`/api/contacts/${encodeURIComponent(d.id)}/relationship?token=${TOKEN}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relationship: e.target.value })
+      }).then(r => r.json());
+      if (r.error) toast('Error: ' + r.error);
+      else { toast('Relationship saved'); openDetail(d.id); }
+    });
+  }
+  const resetRelBtn = document.getElementById('reset-rel-btn');
+  if (resetRelBtn) {
+    resetRelBtn.addEventListener('click', async () => {
+      await fetch(`/api/contacts/${encodeURIComponent(d.id)}/relationship/reset?token=${TOKEN}`, { method: 'POST' });
+      toast('Auto-detection restored');
+      openDetail(d.id);
     });
   }
 

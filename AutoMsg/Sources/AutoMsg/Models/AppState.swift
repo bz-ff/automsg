@@ -94,8 +94,32 @@ final class AppState: ObservableObject {
         m.onAutoReplySkipped = { contactID, reason in
             print("[AutoMsg] Skipped auto-reply for \(contactID): \(reason)")
         }
+        m.onAbstainedToDraft = { [weak self] contactID, reason, suggestedDraft in
+            Task { @MainActor in
+                guard let self,
+                      let idx = self.contacts.firstIndex(where: { $0.id == contactID }) else { return }
+                if !suggestedDraft.isEmpty {
+                    self.contacts[idx].currentDraft = suggestedDraft
+                }
+                self.addActivity(contactID: contactID, type: .autoReply,
+                                 incoming: "(abstained: \(reason))",
+                                 reply: suggestedDraft.isEmpty ? "[no draft]" : suggestedDraft)
+                print("[AutoMsg] Abstained for \(contactID): \(reason). Draft: \(suggestedDraft.isEmpty ? "<empty>" : "set")")
+            }
+        }
         return m
     }()
+
+    func setRelationship(_ rel: RelationshipType, for contactID: String) {
+        guard let idx = contacts.firstIndex(where: { $0.id == contactID }) else { return }
+        contacts[idx].memory.relationship = rel
+        contacts[idx].memory.relationshipUserOverride = true
+    }
+
+    func resetRelationshipOverride(for contactID: String) {
+        guard let idx = contacts.firstIndex(where: { $0.id == contactID }) else { return }
+        contacts[idx].memory.relationshipUserOverride = false
+    }
 
     private var healthTimer: Timer?
 

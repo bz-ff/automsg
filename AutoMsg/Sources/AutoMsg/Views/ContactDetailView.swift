@@ -238,6 +238,38 @@ struct ContactDetailView: View {
                             .cornerRadius(4)
                     }
                 }
+
+                HStack(spacing: 6) {
+                    Text("Relationship:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Picker("", selection: Binding(
+                        get: { contact.memory.relationship },
+                        set: { newVal in appState.setRelationship(newVal, for: contact.id) }
+                    )) {
+                        ForEach(RelationshipType.allCases, id: \.self) { r in
+                            Text("\(r.emoji) \(r.label)").tag(r)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+
+                    if contact.memory.relationshipUserOverride {
+                        Button {
+                            appState.resetRelationshipOverride(for: contact.id)
+                        } label: {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                        .help("Stop overriding — let memory refresh re-detect")
+                    } else {
+                        Text("auto-detected")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
 
             if let info = appState.lastSendInfo {

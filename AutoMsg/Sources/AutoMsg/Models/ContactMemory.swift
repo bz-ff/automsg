@@ -1,5 +1,64 @@
 import Foundation
 
+enum RelationshipType: String, Codable, CaseIterable, Hashable {
+    case unknown
+    case closeFriend = "close_friend"
+    case friend
+    case family
+    case romantic
+    case professional
+    case acquaintance
+    case service
+
+    var label: String {
+        switch self {
+        case .unknown: return "Unknown"
+        case .closeFriend: return "Close friend"
+        case .friend: return "Friend"
+        case .family: return "Family"
+        case .romantic: return "Romantic"
+        case .professional: return "Professional / work"
+        case .acquaintance: return "Acquaintance"
+        case .service: return "Service / transactional"
+        }
+    }
+
+    var emoji: String {
+        switch self {
+        case .unknown: return "❔"
+        case .closeFriend: return "🤝"
+        case .friend: return "👋"
+        case .family: return "💛"
+        case .romantic: return "❤️"
+        case .professional: return "💼"
+        case .acquaintance: return "👤"
+        case .service: return "🧾"
+        }
+    }
+
+    /// Tone guidance fed into the prompt for each relationship.
+    var toneRules: String {
+        switch self {
+        case .unknown:
+            return "Tone: neutral, observe before committing. Warm but not too familiar."
+        case .closeFriend:
+            return "Tone: very casual, banter, react like a close friend. Slang and humor are welcome."
+        case .friend:
+            return "Tone: friendly and casual but not overly familiar. Match the conversation's energy."
+        case .family:
+            return "Tone: warm, considerate. Show care. Avoid sarcasm unless conversation history shows it's normal."
+        case .romantic:
+            return "Tone: affectionate within the user's voice. Don't be performative."
+        case .professional:
+            return "Tone: clear, polite, direct. No slang. No casual abbreviations. Respond like a colleague would."
+        case .acquaintance:
+            return "Tone: friendly but reserved. Brief. Don't assume closeness."
+        case .service:
+            return "Tone: factual, concise, polite. No banter. No filler. Get to the point."
+        }
+    }
+}
+
 struct UserStyleProfile: Codable, Hashable {
     var lowercaseOnly: Bool = false
     var omitsPeriods: Bool = false
@@ -62,6 +121,8 @@ struct ContactMemory: Codable, Hashable {
     var openLoops: [String] = []
     var preferences: [String] = []
     var styleProfile: UserStyleProfile = UserStyleProfile()
+    var relationship: RelationshipType = .unknown
+    var relationshipUserOverride: Bool = false      // if true, summarizer won't change it
     var lastSummarizedROWID: Int64 = 0
     var lastSummarizedAt: Date? = nil
     var messagesSinceLastSummary: Int = 0

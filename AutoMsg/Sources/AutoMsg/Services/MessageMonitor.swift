@@ -31,7 +31,13 @@ final class MessageMonitor: ObservableObject {
         self.lastProcessedROWID = Persistence.lastProcessedROWID
         self.smartTriggers = SmartTriggers(dbService: dbService, ollama: ollama)
         self.memorySummarizer = MemorySummarizer(dbService: dbService, ollama: ollama)
+        self.intentClassifier = IntentClassifier(ollama: ollama)
     }
+
+    let intentClassifier: IntentClassifier
+
+    /// Callback fired when an auto-reply abstains and we want the user to draft manually.
+    var onAbstainedToDraft: ((String, String, String) -> Void)?  // (contactID, reason, suggestedDraft?)
 
     func start(contacts: [Contact]) {
         guard !isRunning else { return }
@@ -177,9 +183,6 @@ final class MessageMonitor: ObservableObject {
 
     private func handleIncomingMessage(_ message: ChatMessage, contact: Contact, mergedMessages: [ChatMessage]) async {
         do {
-            // LAZY MEMORY SEED: if this contact has no long-term memory yet,
-            // generate it BEFORE composing the reply so the first response is
-            // context-informed rather than cold.
             var liveContact = contactProvider?(contact.id) ?? contact
             if liveContact.memory.isEmpty {
                 print("[Memory] Seeding initial memory for \(liveContact.displayLabel) before first reply")
@@ -188,7 +191,6 @@ final class MessageMonitor: ObservableObject {
                     liveContact.memory = seeded
                 }
             } else if liveContact.memory.styleProfile.isEmpty {
-                // Existing memory but no style profile yet — quick deterministic refresh
                 if let style = memorySummarizer.refreshStyleOnly(for: liveContact) {
                     liveContact.memory.styleProfile = style
                     onMemoryUpdated?(contact.id, liveContact.memory)
@@ -202,29 +204,61 @@ final class MessageMonitor: ObservableObject {
 
             let memory = liveContact.memory.isEmpty ? nil : liveContact.memory
 
+            // Classify the latest message's intent. The model uses this to pick the right posture.
+            let latestText = mergedMessages.last?.text ?? message.text
+            let intent = await intentClassifier.classify(message: latestText, recentContext: history)
+            print("[Intent] \(contact.displayLabel): \(intent?.rawValue ?? "unknown")")
+
+            // Hard short-circuit: if the classifier says only the user can answer, abstain immediately.
+            if intent == .needsUser {
+                print("[Abstain] \(contact.displayLabel): needs_user — routing to draft")
+                onAbstainedToDraft?(contact.id, "Needs your input — answer manually", "")
+                return
+            }
+
             let prompt: String
             if mergedMessages.count > 1 {
                 prompt = ConversationContext.buildAutoReplyPromptForBurst(
                     contact: contact.displayLabel,
                     newMessages: mergedMessages.map { $0.text },
                     history: history,
-                    memory: memory
+                    memory: memory,
+                    intent: intent
                 )
             } else {
                 prompt = ConversationContext.buildAutoReplyPrompt(
                     contact: contact.displayLabel,
                     newMessage: message.text,
                     history: history,
-                    memory: memory
+                    memory: memory,
+                    intent: intent
                 )
             }
 
             let raw = try await ollama.generate(prompt: prompt)
+
+            // Abstain sentinel from the model itself
+            if ConversationContext.isInsufficientContext(raw) {
+                print("[Abstain] \(contact.displayLabel): model returned INSUFFICIENT_CONTEXT")
+                onAbstainedToDraft?(contact.id, "AI flagged this needs your input", "")
+                return
+            }
+
             var reply = ConversationContext.cleanLLMArtifacts(raw)
             reply = ConversationContext.enforceSpelling(reply, profile: liveContact.memory.styleProfile)
             reply = ConversationContext.enforceEmojiRate(reply, profile: liveContact.memory.styleProfile)
             reply = ConversationContext.scrubPII(reply)
             guard !reply.isEmpty else { return }
+
+            // Parrot guard: reject if the reply is essentially just echoing back the
+            // incoming message or one of the user's own recent messages.
+            let parrotComparisons: [String] = mergedMessages.map { $0.text } +
+                history.filter { $0.isFromMe }.suffix(8).map { $0.text }
+            if ConversationContext.isParrot(reply, against: parrotComparisons) {
+                print("[Parrot] \(contact.displayLabel): output too similar to recent messages, abstaining")
+                onAbstainedToDraft?(contact.id, "AI parroted the conversation — draft manually", reply)
+                return
+            }
 
             let preference: AppleScriptRunner.ServicePreference = message.isSMS ? .sms : .iMessage
             try await sender.send(text: reply, to: message.contactID, allowSMS: allowSMSReplies, prefer: preference)

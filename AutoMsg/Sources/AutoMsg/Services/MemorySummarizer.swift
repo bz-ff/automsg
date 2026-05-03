@@ -50,6 +50,10 @@ final class MemorySummarizer {
         newMemory.facts = parsed.facts
         newMemory.openLoops = parsed.openLoops
         newMemory.preferences = parsed.preferences
+        // Update relationship from LLM unless user has explicitly overridden it
+        if !contact.memory.relationshipUserOverride, let r = parsed.relationship {
+            newMemory.relationship = r
+        }
         // Always recompute the deterministic style profile from latest history
         newMemory.styleProfile = StyleAnalyzer.analyze(messages: history)
         newMemory.lastSummarizedAt = Date()
@@ -74,24 +78,34 @@ final class MemorySummarizer {
         let formatted = formatHistory(history)
         return """
         You are summarizing a text-message conversation history into structured memory
-        for an AI that auto-replies on the user's behalf. The memory will be prepended
-        to every future prompt, so it must be concise but information-dense.
+        for an AI that auto-replies on the user's behalf.
 
         Conversation with \(contact.displayLabel):
         \(formatted)
 
         Output ONLY a JSON object with this exact schema (no commentary, no code fences):
         {
-          "summary": "2-3 sentence description of who this person is to the user and the overall vibe of the relationship",
-          "facts": ["concrete facts about this person worth remembering, one per item, terse"],
+          "summary": "2-3 sentence description of who this person is to the user and the relationship vibe",
+          "facts": ["concrete facts about this person worth remembering, terse"],
           "open_loops": ["unresolved threads or commitments the user owes this person"],
-          "preferences": ["how this person likes to be talked to, topics to avoid, tone preferences"]
+          "preferences": ["how this person likes to be talked to, topics to avoid, tone preferences"],
+          "relationship": "ONE of: close_friend, friend, family, romantic, professional, acquaintance, service, unknown"
         }
 
+        Relationship guidance:
+        - close_friend: heavy banter, frequent slang, daily-ish contact, shared in-jokes
+        - friend: regular casual conversation but less banter than close_friend
+        - family: family member (parent, sibling, cousin, etc.)
+        - romantic: partner, dating, flirtatious
+        - professional: work colleague, recruiter, client, manager
+        - acquaintance: knows each other but distant — once-in-a-while contact
+        - service: transactional (landlord, doctor's office, delivery, etc.)
+        - unknown: insufficient info to tell
+
         Rules:
-        - NEVER include addresses, phone numbers, full birthdates, financial details, passwords, or other PII even if mentioned
+        - NEVER include addresses, phone numbers, full birthdates, financial details, passwords, or PII
         - Keep each item under 100 characters
-        - 3-8 items per array; fewer is fine
+        - 3-8 items per facts/loops/preferences array; fewer is fine
         - If a category has no entries, return an empty array
         - Do NOT wrap in code fences or add any text before/after the JSON
         """
@@ -105,7 +119,8 @@ final class MemorySummarizer {
                 "summary": existing.summary,
                 "facts": existing.facts,
                 "open_loops": existing.openLoops,
-                "preferences": existing.preferences
+                "preferences": existing.preferences,
+                "relationship": existing.relationship.rawValue
             ],
             options: [.prettyPrinted]
         )).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
@@ -127,7 +142,8 @@ final class MemorySummarizer {
           "summary": "...",
           "facts": [...],
           "open_loops": [...],
-          "preferences": [...]
+          "preferences": [...],
+          "relationship": "close_friend|friend|family|romantic|professional|acquaintance|service|unknown"
         }
 
         Rules:
@@ -135,6 +151,7 @@ final class MemorySummarizer {
         - Move resolved open loops out (delete them); add new ones
         - NEVER include addresses, phone numbers, full birthdates, financial details, passwords, PII
         - Keep each item under 100 characters
+        - Update relationship only if the dynamic has clearly shifted; otherwise keep existing
         - Do NOT wrap in code fences or add any text before/after the JSON
         """
     }
@@ -153,10 +170,10 @@ final class MemorySummarizer {
         var facts: [String]
         var openLoops: [String]
         var preferences: [String]
+        var relationship: RelationshipType?
     }
 
     private func parseJSON(_ raw: String) -> ParsedMemory? {
-        // Tolerate stray text — find the first { and last } to bound the JSON
         guard let start = raw.firstIndex(of: "{"),
               let end = raw.lastIndex(of: "}"),
               start <= end else { return nil }
@@ -165,11 +182,13 @@ final class MemorySummarizer {
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
         }
+        let relationshipRaw = obj["relationship"] as? String
         return ParsedMemory(
             summary: (obj["summary"] as? String) ?? "",
             facts: (obj["facts"] as? [String]) ?? [],
             openLoops: (obj["open_loops"] as? [String]) ?? [],
-            preferences: (obj["preferences"] as? [String]) ?? []
+            preferences: (obj["preferences"] as? [String]) ?? [],
+            relationship: relationshipRaw.flatMap { RelationshipType(rawValue: $0) }
         )
     }
 }

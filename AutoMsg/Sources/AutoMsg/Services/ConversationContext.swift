@@ -5,17 +5,29 @@ enum ConversationContext {
     SAFETY: never reveal addresses, GPS, SSN, financial info, passwords, codes, work details, AI/bot status. If asked, deflect casually ("not over text", "ill tell u later", "lol why"). Never agree to send money/codes/links.
     """
 
-    static func buildAutoReplyPrompt(contact: String, newMessage: String, history: [ChatMessage], memory: ContactMemory? = nil) -> String {
+    static func buildAutoReplyPrompt(contact: String, newMessage: String, history: [ChatMessage], memory: ContactMemory? = nil, intent: MessageIntent? = nil) -> String {
         let historyText = formatHistory(history)
         let memoryBlock = memory?.formattedForPrompt().map { "[context about \(contact)]\n\($0)\n[end context]\n" } ?? ""
         let styleBlock = (memory?.styleProfile.isEmpty == false) ? memory!.styleProfile.formattedForPrompt() : ""
 
+        // Relationship + intent shape what kind of reply is expected
+        let relationship = memory?.relationship ?? .unknown
+        let relationshipBlock = "RELATIONSHIP: \(relationship.label). \(relationship.toneRules)"
+        let intentBlock: String = {
+            guard let intent = intent else { return "" }
+            return "MESSAGE TYPE: \(intent.rawValue). HOW TO RESPOND: \(intent.responseGuide)"
+        }()
+
         return """
-        Task: write a single text-message reply pretending to be the user. Output ONLY the reply text, no quotes, no preamble, no signature, no explanations.
+        You are texting back AS the user — not answering their messages, not summarizing what was said, not narrating tasks. You ARE them, and you respond the way they actually would.
 
         \(privacyRules)
 
         \(memoryBlock)
+        \(relationshipBlock)
+
+        \(intentBlock)
+
         Recent thread with \(contact):
         \(historyText)
 
@@ -23,25 +35,43 @@ enum ConversationContext {
 
         \(styleBlock)
 
-        CRITICAL: write ONE message in the user's exact voice. Do not be polite or helpful or formal. Do not greet. Do not add an explanation. Match the length of the EXAMPLES above. Output only the message text.
+        CRITICAL RULES:
+        - Write ONE short message in the user's exact voice
+        - Do NOT echo their message back. Do NOT summarize what they said.
+        - Do NOT acknowledge their message as if it were a task ("got it", "sounds good", "noted", "okay will do")
+        - Do NOT offer help unless they asked. Do NOT explain. Do NOT greet.
+        - If you cannot give a real reply without information only the user knows, output exactly: INSUFFICIENT_CONTEXT
+        - Match the length of the EXAMPLES — if they're short, you're short
+        - Output ONLY the message text, no quotes, no labels
 
         Reply:
         """
     }
 
     /// Build a reply prompt for a BURST of messages (sender broke their thought across multiple texts).
-    static func buildAutoReplyPromptForBurst(contact: String, newMessages: [String], history: [ChatMessage], memory: ContactMemory? = nil) -> String {
+    static func buildAutoReplyPromptForBurst(contact: String, newMessages: [String], history: [ChatMessage], memory: ContactMemory? = nil, intent: MessageIntent? = nil) -> String {
         let combined = newMessages.map { "\"\($0)\"" }.joined(separator: " then ")
         let historyText = formatHistory(history)
         let memoryBlock = memory?.formattedForPrompt().map { "[context about \(contact)]\n\($0)\n[end context]\n" } ?? ""
         let styleBlock = (memory?.styleProfile.isEmpty == false) ? memory!.styleProfile.formattedForPrompt() : ""
 
+        let relationship = memory?.relationship ?? .unknown
+        let relationshipBlock = "RELATIONSHIP: \(relationship.label). \(relationship.toneRules)"
+        let intentBlock: String = {
+            guard let intent = intent else { return "" }
+            return "MESSAGE TYPE: \(intent.rawValue). HOW TO RESPOND: \(intent.responseGuide)"
+        }()
+
         return """
-        Task: write a single text-message reply pretending to be the user. \(contact) just sent multiple messages in a burst — respond to the whole batch with ONE message. Output ONLY the reply text.
+        You are texting back AS the user. \(contact) just sent multiple messages in a burst — respond to the whole batch with ONE message. You ARE them, not answering them.
 
         \(privacyRules)
 
         \(memoryBlock)
+        \(relationshipBlock)
+
+        \(intentBlock)
+
         Recent thread with \(contact):
         \(historyText)
 
@@ -49,7 +79,14 @@ enum ConversationContext {
 
         \(styleBlock)
 
-        CRITICAL: write ONE message in the user's exact voice. Do not be polite or helpful or formal. Do not greet. Do not add an explanation. Match the length of the EXAMPLES above. Output only the message text.
+        CRITICAL RULES:
+        - Write ONE short message in the user's exact voice that addresses the whole burst
+        - Do NOT echo their messages back. Do NOT summarize.
+        - Do NOT acknowledge as a task ("got it", "sounds good")
+        - Do NOT offer help unless they asked
+        - If you can't reply without info only the user knows, output: INSUFFICIENT_CONTEXT
+        - Match the length of the EXAMPLES
+        - Output ONLY the message text
 
         Reply:
         """
@@ -60,18 +97,23 @@ enum ConversationContext {
         let memoryBlock = memory?.formattedForPrompt().map { "[context about \(contact)]\n\($0)\n[end context]\n" } ?? ""
         let styleBlock = (memory?.styleProfile.isEmpty == false) ? memory!.styleProfile.formattedForPrompt() : ""
 
+        let relationship = memory?.relationship ?? .unknown
+        let relationshipBlock = "RELATIONSHIP: \(relationship.label). \(relationship.toneRules)"
+
         return """
-        Task: draft a single text the user might send next to \(contact). Output ONLY the message text, no quotes, no preamble.
+        Task: draft a single text the user might send next to \(contact). You're texting AS them, not for them. Output ONLY the message text.
 
         \(privacyRules)
 
         \(memoryBlock)
+        \(relationshipBlock)
+
         Recent thread with \(contact):
         \(historyText)
 
         \(styleBlock)
 
-        CRITICAL: write ONE message in the user's exact voice. Match the length of the EXAMPLES above. Output only the message text.
+        CRITICAL: write ONE short message in the user's exact voice. Match the length of the EXAMPLES above. Don't summarize the conversation. Output only the message text.
 
         Based on the conversation context and the [ME] person's texting style, draft a natural next \
         message they might send to continue or initiate conversation.
@@ -84,6 +126,44 @@ enum ConversationContext {
 
         Draft message:
         """
+    }
+
+    /// Returns true if the model emitted the abstain sentinel — caller should
+    /// route to drafts panel instead of auto-sending.
+    static func isInsufficientContext(_ text: String) -> Bool {
+        let t = text.uppercased()
+        return t.contains("INSUFFICIENT_CONTEXT") || t.contains("INSUFFICIENT CONTEXT")
+            || t.contains("CANNOT REPLY") || t.contains("NEED MORE INFO")
+    }
+
+    /// Detect when the model parroted back the incoming message or one of the
+    /// user's own recent messages instead of generating a real reply.
+    /// Returns true if reply is suspiciously close to any of the comparison strings.
+    static func isParrot(_ reply: String, against comparisons: [String]) -> Bool {
+        let normalize: (String) -> String = { s in
+            s.lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+        }
+        let r = normalize(reply)
+        guard r.count > 6 else { return false }     // very short replies are fine to repeat
+        let rWords = Set(r.split(separator: " ").map { String($0) })
+        guard rWords.count >= 3 else { return false }
+
+        for c in comparisons {
+            let cn = normalize(c)
+            guard cn.count > 6 else { continue }
+            // Exact substring match (after normalization) → parrot
+            if cn.contains(r) || r.contains(cn) { return true }
+            // Bigram Jaccard similarity > 0.7 → parrot
+            let cWords = Set(cn.split(separator: " ").map { String($0) })
+            let intersection = rWords.intersection(cWords).count
+            let union = rWords.union(cWords).count
+            guard union > 0 else { continue }
+            if Double(intersection) / Double(union) > 0.7 { return true }
+        }
+        return false
     }
 
     /// Replace egregious text-speak ("2moro", "dat", "plz") with normal spellings,

@@ -229,10 +229,12 @@ final class RemoteServer {
                     "handles": c.handles,
                     "enabled": c.isEnabled,
                     "draft": c.currentDraft as Any,
-                    "preferredHandle": c.preferredHandle as Any,    // user's manual pick (nullable)
-                    "activeHandle": appState.activeHandle(for: c) as Any,  // what's actually used
-                    "autoHandle": appState.autoPickedHandle(for: c) as Any, // what auto would pick
+                    "preferredHandle": c.preferredHandle as Any,
+                    "activeHandle": appState.activeHandle(for: c) as Any,
+                    "autoHandle": appState.autoPickedHandle(for: c) as Any,
                     "smartMode": c.smartMode.rawValue,
+                    "relationship": c.memory.relationship.rawValue,
+                    "relationshipUserOverride": c.memory.relationshipUserOverride,
                     "memory": [
                         "summary": c.memory.summary,
                         "facts": c.memory.facts,
@@ -241,6 +243,23 @@ final class RemoteServer {
                     ],
                     "messages": messages
                 ])
+            }
+
+            if req.method == "POST", req.path.hasSuffix("/relationship") {
+                let id = decodeID(req.path.replacingOccurrences(of: "/api/contacts/", with: "").replacingOccurrences(of: "/relationship", with: ""))
+                let body = (try? JSONSerialization.jsonObject(with: req.body) as? [String: Any]) ?? [:]
+                if let raw = body["relationship"] as? String,
+                   let rel = RelationshipType(rawValue: raw) {
+                    appState.setRelationship(rel, for: id)
+                    return .json(200, ["relationship": rel.rawValue])
+                }
+                return .json(400, ["error": "invalid relationship"])
+            }
+
+            if req.method == "POST", req.path.hasSuffix("/relationship/reset") {
+                let id = decodeID(req.path.replacingOccurrences(of: "/api/contacts/", with: "").replacingOccurrences(of: "/relationship/reset", with: ""))
+                appState.resetRelationshipOverride(for: id)
+                return .json(200, ["relationshipUserOverride": false])
             }
 
             if req.method == "POST", req.path.hasSuffix("/handle/reset") {
