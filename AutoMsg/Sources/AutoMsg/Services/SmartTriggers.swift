@@ -54,37 +54,49 @@ final class SmartTriggers {
             return msg.hasAttachment ? .reply : .skip("empty message")
         }
 
-        // Single emoji / very short reactions
-        if text.count <= 2 { return .skip("too short (\(text.count) chars)") }
-
         let lower = text.lowercased()
 
-        // Common acknowledgments
+        // GREETINGS — always reply, even if very short (gm, gn, hey, yo, sup)
+        let greetings: Set<String> = [
+            "gm", "g.m", "g.m.", "good morning", "morning", "mornin", "mornin'",
+            "gn", "g.n", "good night", "goodnight", "night", "nighty",
+            "hey", "heyy", "heyyy", "hey there", "hi", "hii", "hello", "helo", "henlo",
+            "yo", "yoo", "yooo", "ayo", "ay", "wassup", "whats up", "what's up", "sup",
+            "wyd", "what u doing", "what you doing", "wya", "where you at", "where u at",
+            "u up", "you up", "u there", "you there"
+        ]
+        if greetings.contains(lower) { return .reply }
+
+        // Common acknowledgments — these we skip
         let ackWords: Set<String> = [
             "ok", "kk", "k", "okay", "k.", "ok.", "kk.",
-            "lol", "lmao", "rofl", "haha", "hehe", "ha", "hahaha",
-            "cool", "nice", "sweet", "awesome", "great",
-            "thx", "ty", "tysm", "thanks", "thank you",
+            "lol", "lmao", "rofl", "haha", "hehe", "ha", "hahaha", "lolol",
+            "cool", "nice", "sweet", "awesome", "great", "perfect",
+            "thx", "ty", "tysm", "thanks", "thank you", "thanku",
             "yes", "yep", "yup", "ya", "yeah", "sure",
             "no", "nope", "nah",
             "hmm", "mhm", "mhmm",
-            "got it", "noted", "sounds good", "alright", "aight", "word", "bet"
+            "got it", "noted", "sounds good", "alright", "aight", "word", "bet", "ight"
         ]
         if ackWords.contains(lower) { return .skip("ack/short reply") }
+
+        // Single character / very short non-greeting non-ack
+        if text.count <= 1 { return .skip("too short (\(text.count) chars)") }
 
         // Pure emoji message (no letters/digits)
         let hasAlphanumeric = text.unicodeScalars.contains { CharacterSet.alphanumerics.contains($0) }
         if !hasAlphanumeric { return .skip("emoji/punctuation only") }
 
-        // Clearly a question or planning message → definitely reply
+        // Question or planning → reply
         if text.contains("?") { return .reply }
-        let planKeywords = ["when", "where", "what time", "let me know", "wyd", "what u doing", "u free", "you free", "you up", "u up"]
+        let planKeywords = ["when", "where", "what time", "let me know", "wyd", "u free", "you free", "you up", "u up", "down to", "wanna"]
         if planKeywords.contains(where: lower.contains) { return .reply }
 
-        // Long messages (>30 chars and not pure ack) — likely worth a reply
-        if text.count > 30 { return .reply }
+        // Status updates / short content messages with letters → reply
+        // ("blazing", "im up", "at the gym", "starving", "bored", etc.)
+        // Anything that's a real word and not a pure ack is worth at least the LLM check
+        if text.count >= 3 && hasAlphanumeric { return .reply }
 
-        // Otherwise, borderline — defer to LLM
         return .borderline
     }
 

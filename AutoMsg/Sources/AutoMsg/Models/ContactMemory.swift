@@ -18,20 +18,29 @@ struct UserStyleProfile: Codable, Hashable {
         if omitsPeriods { rules.append("Don't use periods at the end of messages") }
         if avoidsCapitalI { rules.append("Write 'i' lowercase, never 'I'") }
         if avgLength > 0 {
-            if avgLength < 20 { rules.append("Keep messages SHORT — typically under 20 characters, often just a few words") }
-            else if avgLength < 40 { rules.append("Keep messages moderately short — typically 20-40 characters") }
-            else { rules.append("Messages can be a bit longer — typically 40-80 characters") }
+            if avgLength < 20 { rules.append("Keep it SHORT — typically under 20 characters") }
+            else if avgLength < 40 { rules.append("Keep it moderately short — 20-40 characters") }
+            else { rules.append("Length can vary — typically 40-80 characters") }
         }
         if emojiRate < 0.1 { rules.append("Rarely use emojis (less than 1 in 10 messages)") }
         else if emojiRate > 0.5 { rules.append("Frequently use emojis (about half of messages)") }
-        if !commonAbbreviations.isEmpty { rules.append("Use these abbreviations naturally: \(commonAbbreviations.joined(separator: ", "))") }
-        if !commonPhrases.isEmpty { rules.append("Frequently use phrases like: \(commonPhrases.joined(separator: ", "))") }
+
+        // Critical: only allow abbreviations the user actually uses, and FORBID inventing new ones
+        if !commonAbbreviations.isEmpty {
+            rules.append("ONLY these abbreviations are allowed: \(commonAbbreviations.joined(separator: ", ")). Do NOT invent text-speak.")
+        } else {
+            rules.append("Do NOT use text-speak abbreviations like 'u', 'ur', '2moro', 'dat', 'dis', 'tho'. Spell words normally.")
+        }
+        if !commonPhrases.isEmpty { rules.append("Common phrases this person uses: \(commonPhrases.joined(separator: ", "))") }
+
+        rules.append("FORBIDDEN: 'dat', 'dis', '2moro', '2nite', 'dis', 'gud', 'plz', 'pls' unless they appear in EXAMPLES below")
+        rules.append("Do not write phonetically or use 'baby talk' spelling")
 
         var output = "STYLE RULES (must follow exactly):\n"
         output += rules.map { "- \($0)" }.joined(separator: "\n")
 
         if !examples.isEmpty {
-            output += "\n\nEXAMPLES of how the person actually texts (mimic this voice exactly):\n"
+            output += "\n\nEXAMPLES — these are real messages the person sent. Match their EXACT spelling, length, and tone. Do not deviate from this voice:\n"
             output += examples.map { "→ \($0)" }.joined(separator: "\n")
         }
 

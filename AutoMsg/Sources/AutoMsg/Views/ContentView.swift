@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
     @State private var showRemote = false
+    @State private var showSettings = false
 
     var body: some View {
         NavigationSplitView {
@@ -27,6 +28,14 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Button {
+                    showSettings = true
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+                .help("Settings")
+            }
+            ToolbarItem(placement: .automatic) {
+                Button {
                     showRemote = true
                 } label: {
                     Image(systemName: "iphone.radiowaves.left.and.right")
@@ -39,6 +48,10 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showRemote) {
             RemoteAccessView()
+                .environmentObject(appState)
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
                 .environmentObject(appState)
         }
         .frame(minWidth: 700, minHeight: 500)

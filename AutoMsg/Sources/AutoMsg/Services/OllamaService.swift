@@ -24,11 +24,11 @@ final class OllamaService {
             "prompt": prompt,
             "stream": false,
             "options": [
-                "temperature": 0.85,           // a bit more variability than default 0.8
-                "top_p": 0.92,
-                "repeat_penalty": 1.15,        // discourage formal repetition like "Hi! How are you?"
-                "num_predict": 120,            // cap output — texts shouldn't be long
-                "stop": ["\n\n", "Reply:", "\n→", "Note:", "Explanation:", "Note that"]
+                "temperature": 0.5,            // tighter — sticks to instructions, less creative drift
+                "top_p": 0.9,
+                "repeat_penalty": 1.1,
+                "num_predict": 120,
+                "stop": ["\n\n", "Reply:", "\n→", "Note:", "Explanation:", "Note that", "Translation:"]
             ]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
