@@ -292,12 +292,18 @@ button:disabled { opacity: 0.4; }
       <div id="model-list"></div>
       <p style="font-size:12px;color:var(--text-2);margin-top:14px;line-height:1.4">
         Tip: 7B+ models give better style mimicry. Recommended: <code>qwen2.5:7b</code>.
-        Changing the model requires restarting AutoMsg on the Mac.
+        Model changes apply on the next AutoMsg launch.
       </p>
       <p style="font-size:12px;color:var(--text-2);line-height:1.4">
         New models? Run <code style="background:var(--bg-3);padding:2px 4px;border-radius:3px">ollama pull &lt;name&gt;</code> in Terminal on the Mac, then refresh.
       </p>
-      <button class="secondary" id="refresh-models" style="margin-top:8px">Refresh list</button>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button class="secondary" id="refresh-models">Refresh list</button>
+        <button class="primary" id="restart-app" style="flex:1">⟲ Restart AutoMsg on Mac</button>
+      </div>
+      <p style="font-size:11px;color:var(--text-2);margin-top:8px;line-height:1.4">
+        Restart applies the active model (and any other pending changes). The remote will reconnect within a few seconds.
+      </p>
     </div>
   </div>
 
@@ -583,6 +589,33 @@ document.getElementById('settings-back').addEventListener('click', () => {
   document.getElementById('settings').classList.remove('open');
 });
 document.getElementById('refresh-models').addEventListener('click', loadModels);
+document.getElementById('restart-app').addEventListener('click', async () => {
+  const btn = document.getElementById('restart-app');
+  btn.disabled = true; btn.textContent = '⟲ Restarting…';
+  try {
+    await fetch('/api/restart?token=' + TOKEN, { method: 'POST' });
+  } catch (e) { /* expected — server tore down its connection */ }
+  toast('Restart triggered. Reconnecting…');
+  // Poll status until the server comes back up, then refresh the page
+  let attempts = 0;
+  const reconnect = setInterval(async () => {
+    attempts++;
+    try {
+      const r = await fetch('/api/status?token=' + TOKEN, { cache: 'no-store' });
+      if (r.ok) {
+        clearInterval(reconnect);
+        toast('AutoMsg back online ✓');
+        btn.disabled = false; btn.textContent = '⟲ Restart AutoMsg on Mac';
+        loadStatus(); loadContacts(); loadModels();
+      }
+    } catch (e) { /* still down, keep polling */ }
+    if (attempts > 60) {
+      clearInterval(reconnect);
+      btn.disabled = false; btn.textContent = '⟲ Restart AutoMsg on Mac';
+      toast('Server didn\\'t come back. Check the Mac.', 4000);
+    }
+  }, 1000);
+});
 
 async function openSettings() {
   document.getElementById('settings').classList.add('open');

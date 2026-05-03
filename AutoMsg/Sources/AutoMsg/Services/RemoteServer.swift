@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import AppKit
 
 final class RemoteServer {
     private var listener: NWListener?
@@ -164,8 +165,33 @@ final class RemoteServer {
             Persistence.modelName = name
             return .json(200, [
                 "active": name,
-                "note": "Restart AutoMsg on the Mac for the change to take effect"
+                "note": "Hit Restart in settings to apply"
             ])
+
+        case ("POST", "/api/restart"):
+            // Schedule the app to relaunch itself: spawn a detached helper that
+            // waits for this process to exit, then re-opens the .app bundle.
+            let bundlePath = Bundle.main.bundlePath
+            let pid = ProcessInfo.processInfo.processIdentifier
+            let script = """
+            (while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done; sleep 0.5; /usr/bin/open '\(bundlePath)') &
+            """
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/sh")
+            task.arguments = ["-c", script]
+            task.standardOutput = FileHandle.nullDevice
+            task.standardError = FileHandle.nullDevice
+            do {
+                try task.run()
+            } catch {
+                return .json(500, ["error": "failed to schedule restart: \(error.localizedDescription)"])
+            }
+            // Trigger a clean shutdown after we've sent the response.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                appState.shutdown()
+                NSApplication.shared.terminate(nil)
+            }
+            return .json(200, ["restarting": true])
 
         case ("GET", "/api/activity"):
             let payload = appState.activityLog.prefix(50).map { e -> [String: Any] in
