@@ -177,12 +177,23 @@ final class MessageMonitor: ObservableObject {
 
     private func handleIncomingMessage(_ message: ChatMessage, contact: Contact, mergedMessages: [ChatMessage]) async {
         do {
+            // LAZY MEMORY SEED: if this contact has no long-term memory yet,
+            // generate it BEFORE composing the reply so the first response is
+            // context-informed rather than cold.
+            var liveContact = contactProvider?(contact.id) ?? contact
+            if liveContact.memory.isEmpty {
+                print("[Memory] Seeding initial memory for \(liveContact.displayLabel) before first reply")
+                if let seeded = await memorySummarizer.refreshMemory(for: liveContact) {
+                    onMemoryUpdated?(contact.id, seeded)
+                    liveContact.memory = seeded  // use it for THIS reply
+                }
+            }
+
             let unified = unifiedHistoryProvider?(contact.id) ?? []
             let history = unified.isEmpty
                 ? (try dbService.fetchConversationHistory(chatIdentifier: message.chatIdentifier, limit: 20))
                 : unified
 
-            let liveContact = contactProvider?(contact.id) ?? contact
             let memory = liveContact.memory.isEmpty ? nil : liveContact.memory
 
             let prompt: String
@@ -222,13 +233,16 @@ final class MessageMonitor: ObservableObject {
         var memory = live.memory
         memory.messagesSinceLastSummary += addedCount
 
-        if memory.messagesSinceLastSummary >= memorySummarizer.watermarkThreshold || memory.isEmpty {
-            print("[Memory] Refreshing memory for \(contact.displayLabel)")
+        // Memory seeding is now done eagerly before the reply (see handleIncomingMessage).
+        // This path only handles INCREMENTAL refreshes once the watermark threshold is hit.
+        if !memory.isEmpty && memory.messagesSinceLastSummary >= memorySummarizer.watermarkThreshold {
+            print("[Memory] Incremental refresh for \(contact.displayLabel) (\(memory.messagesSinceLastSummary) new msgs)")
             if let refreshed = await memorySummarizer.refreshMemory(for: live) {
                 onMemoryUpdated?(contact.id, refreshed)
                 return
             }
         }
+        // Just persist the watermark increment
         onMemoryUpdated?(contact.id, memory)
     }
 
@@ -236,9 +250,19 @@ final class MessageMonitor: ObservableObject {
         guard !contact.handles.isEmpty else { return nil }
 
         do {
-            let history = try dbService.fetchUnifiedHistory(forHandles: contact.handles, limit: 20)
-            let memory = contact.memory.isEmpty ? nil : contact.memory
-            let prompt = ConversationContext.buildDraftPrompt(contact: contact.displayLabel, history: history, memory: memory)
+            // Lazy-seed memory if missing, same as auto-reply path
+            var live = contact
+            if live.memory.isEmpty {
+                print("[Memory] Seeding initial memory for \(live.displayLabel) before first draft")
+                if let seeded = await memorySummarizer.refreshMemory(for: live) {
+                    onMemoryUpdated?(contact.id, seeded)
+                    live.memory = seeded
+                }
+            }
+
+            let history = try dbService.fetchUnifiedHistory(forHandles: live.handles, limit: 20)
+            let memory = live.memory.isEmpty ? nil : live.memory
+            let prompt = ConversationContext.buildDraftPrompt(contact: live.displayLabel, history: history, memory: memory)
             let raw = try await ollama.generate(prompt: prompt)
             let draft = ConversationContext.scrubPII(raw)
             return draft.isEmpty ? nil : draft
