@@ -50,10 +50,22 @@ final class MemorySummarizer {
         newMemory.facts = parsed.facts
         newMemory.openLoops = parsed.openLoops
         newMemory.preferences = parsed.preferences
+        // Always recompute the deterministic style profile from latest history
+        newMemory.styleProfile = StyleAnalyzer.analyze(messages: history)
         newMemory.lastSummarizedAt = Date()
         newMemory.lastSummarizedROWID = history.map { $0.id }.max() ?? newMemory.lastSummarizedROWID
         newMemory.messagesSinceLastSummary = 0
         return newMemory
+    }
+
+    /// Update ONLY the style profile (cheap — no LLM call). Useful when you want
+    /// a quick refresh of the user's voice without re-running the summarizer.
+    func refreshStyleOnly(for contact: Contact) -> UserStyleProfile? {
+        guard !contact.handles.isEmpty else { return nil }
+        guard let history = try? dbService.fetchUnifiedHistory(forHandles: contact.handles, limit: 100) else {
+            return nil
+        }
+        return StyleAnalyzer.analyze(messages: history)
     }
 
     // MARK: - Prompts

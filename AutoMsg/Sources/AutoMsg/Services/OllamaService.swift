@@ -22,7 +22,14 @@ final class OllamaService {
         let body: [String: Any] = [
             "model": model,
             "prompt": prompt,
-            "stream": false
+            "stream": false,
+            "options": [
+                "temperature": 0.85,           // a bit more variability than default 0.8
+                "top_p": 0.92,
+                "repeat_penalty": 1.15,        // discourage formal repetition like "Hi! How are you?"
+                "num_predict": 120,            // cap output — texts shouldn't be long
+                "stop": ["\n\n", "Reply:", "\n→", "Note:", "Explanation:", "Note that"]
+            ]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 

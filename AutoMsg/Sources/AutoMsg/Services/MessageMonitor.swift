@@ -185,7 +185,13 @@ final class MessageMonitor: ObservableObject {
                 print("[Memory] Seeding initial memory for \(liveContact.displayLabel) before first reply")
                 if let seeded = await memorySummarizer.refreshMemory(for: liveContact) {
                     onMemoryUpdated?(contact.id, seeded)
-                    liveContact.memory = seeded  // use it for THIS reply
+                    liveContact.memory = seeded
+                }
+            } else if liveContact.memory.styleProfile.isEmpty {
+                // Existing memory but no style profile yet — quick deterministic refresh
+                if let style = memorySummarizer.refreshStyleOnly(for: liveContact) {
+                    liveContact.memory.styleProfile = style
+                    onMemoryUpdated?(contact.id, liveContact.memory)
                 }
             }
 
@@ -214,7 +220,7 @@ final class MessageMonitor: ObservableObject {
             }
 
             let raw = try await ollama.generate(prompt: prompt)
-            let reply = ConversationContext.scrubPII(raw)
+            let reply = ConversationContext.scrubPII(ConversationContext.cleanLLMArtifacts(raw))
             guard !reply.isEmpty else { return }
 
             let preference: AppleScriptRunner.ServicePreference = message.isSMS ? .sms : .iMessage
@@ -258,13 +264,18 @@ final class MessageMonitor: ObservableObject {
                     onMemoryUpdated?(contact.id, seeded)
                     live.memory = seeded
                 }
+            } else if live.memory.styleProfile.isEmpty {
+                if let style = memorySummarizer.refreshStyleOnly(for: live) {
+                    live.memory.styleProfile = style
+                    onMemoryUpdated?(contact.id, live.memory)
+                }
             }
 
             let history = try dbService.fetchUnifiedHistory(forHandles: live.handles, limit: 20)
             let memory = live.memory.isEmpty ? nil : live.memory
             let prompt = ConversationContext.buildDraftPrompt(contact: live.displayLabel, history: history, memory: memory)
             let raw = try await ollama.generate(prompt: prompt)
-            let draft = ConversationContext.scrubPII(raw)
+            let draft = ConversationContext.scrubPII(ConversationContext.cleanLLMArtifacts(raw))
             return draft.isEmpty ? nil : draft
         } catch {
             onError?("Draft generation failed: \(error.localizedDescription)")

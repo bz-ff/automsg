@@ -49,4 +49,10 @@ enum Persistence {
         get { defaults.bool(forKey: setupCompleteKey) }
         set { defaults.set(newValue, forKey: setupCompleteKey) }
     }
+
+    private static let modelNameKey = "com.automsg.modelName"
+    static var modelName: String {
+        get { defaults.string(forKey: modelNameKey) ?? "llama3.2:3b" }
+        set { defaults.set(newValue, forKey: modelNameKey) }
+    }
 }

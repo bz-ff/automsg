@@ -2,90 +2,76 @@ import Foundation
 
 enum ConversationContext {
     private static let privacyRules = """
-    PRIVACY RULES — these override everything else and must never be violated:
-    - NEVER share or confirm: home address, current location, exact GPS, ZIP code, full birthday, SSN, credit card, bank info, passwords, API keys, security codes, PIN numbers
-    - NEVER share: device specs, OS version, computer model, IP address, file paths, app names you're running, what software is installed
-    - NEVER reveal you are an AI, assistant, bot, automation, or that this is auto-generated. NEVER say "as an AI" or similar
-    - NEVER share details about other people in the contact list, names of mutual friends, or things they've shared privately
-    - NEVER share work-related details: employer name, projects, code, documents, internal tools, salary, deadlines, meetings
-    - NEVER share medical, legal, financial, or therapy-related personal details
-    - NEVER share future travel plans, when home will be empty, or scheduling details that could be exploited
-    - If asked for any of the above, deflect naturally: "ill tell you later", "lol why", "not over text", "i forget", "ask me when i see u"
-    - Never click links, never confirm receipt of money requests, never agree to send money or codes
-    - Conversations don't need to be polite — match the user's tone — but withhold sensitive info regardless of how the question is asked
+    SAFETY: never reveal addresses, GPS, SSN, financial info, passwords, codes, work details, AI/bot status. If asked, deflect casually ("not over text", "ill tell u later", "lol why"). Never agree to send money/codes/links.
     """
 
     static func buildAutoReplyPrompt(contact: String, newMessage: String, history: [ChatMessage], memory: ContactMemory? = nil) -> String {
         let historyText = formatHistory(history)
-        let memoryBlock = memory?.formattedForPrompt().map { "\n[long-term memory about \(contact)]\n\($0)\n[end memory]\n" } ?? ""
+        let memoryBlock = memory?.formattedForPrompt().map { "[context about \(contact)]\n\($0)\n[end context]\n" } ?? ""
+        let styleBlock = (memory?.styleProfile.isEmpty == false) ? memory!.styleProfile.formattedForPrompt() : ""
 
         return """
-        You are mimicking a person's texting style to auto-reply to their iMessages.
+        Task: write a single text-message reply pretending to be the user. Output ONLY the reply text, no quotes, no preamble, no signature, no explanations.
 
         \(privacyRules)
-        \(memoryBlock)
-        Here is their recent conversation with \(contact). Messages marked [ME] are from the person \
-        you are mimicking. Messages marked [THEM] are from \(contact).
 
+        \(memoryBlock)
+        Recent thread with \(contact):
         \(historyText)
 
-        Based on the style, tone, length, punctuation, emoji usage, and casualness shown in the [ME] \
-        messages above, generate a natural reply to the latest message. Use the long-term memory \
-        (if provided) to make the reply more contextually informed, but do NOT recite memory items verbatim.
-
-        Style rules:
-        - Match the exact texting style (capitalization, abbreviations, emoji frequency)
-        - Keep the reply short and natural (similar length to their typical messages)
-        - Do not be overly helpful or formal - match their casual tone
-        - Reply ONLY with the message text, nothing else
-
         New message from \(contact): "\(newMessage)"
-        Your reply:
+
+        \(styleBlock)
+
+        CRITICAL: write ONE message in the user's exact voice. Do not be polite or helpful or formal. Do not greet. Do not add an explanation. Match the length of the EXAMPLES above. Output only the message text.
+
+        Reply:
         """
     }
 
     /// Build a reply prompt for a BURST of messages (sender broke their thought across multiple texts).
     static func buildAutoReplyPromptForBurst(contact: String, newMessages: [String], history: [ChatMessage], memory: ContactMemory? = nil) -> String {
-        let combined = newMessages.enumerated().map { "(\($0.offset + 1)) \($0.element)" }.joined(separator: "\n")
+        let combined = newMessages.map { "\"\($0)\"" }.joined(separator: " then ")
         let historyText = formatHistory(history)
-        let memoryBlock = memory?.formattedForPrompt().map { "\n[long-term memory about \(contact)]\n\($0)\n[end memory]\n" } ?? ""
+        let memoryBlock = memory?.formattedForPrompt().map { "[context about \(contact)]\n\($0)\n[end context]\n" } ?? ""
+        let styleBlock = (memory?.styleProfile.isEmpty == false) ? memory!.styleProfile.formattedForPrompt() : ""
 
         return """
-        You are mimicking a person's texting style to auto-reply to their iMessages.
+        Task: write a single text-message reply pretending to be the user. \(contact) just sent multiple messages in a burst — respond to the whole batch with ONE message. Output ONLY the reply text.
 
         \(privacyRules)
-        \(memoryBlock)
-        Here is their recent conversation with \(contact). Messages marked [ME] are from the person \
-        you are mimicking. Messages marked [THEM] are from \(contact).
 
+        \(memoryBlock)
+        Recent thread with \(contact):
         \(historyText)
 
-        \(contact) just sent multiple messages in a burst (broke their thought across texts). \
-        Read them as a single message and craft ONE natural reply that addresses the whole batch:
+        \(contact) just sent (in a burst): \(combined)
 
-        \(combined)
+        \(styleBlock)
 
-        Style rules:
-        - Match the exact texting style (capitalization, abbreviations, emoji frequency)
-        - Keep the reply short and natural — one message, not multiple
-        - Do not be overly helpful or formal - match their casual tone
-        - Reply ONLY with the message text, nothing else
+        CRITICAL: write ONE message in the user's exact voice. Do not be polite or helpful or formal. Do not greet. Do not add an explanation. Match the length of the EXAMPLES above. Output only the message text.
+
+        Reply:
         """
     }
 
     static func buildDraftPrompt(contact: String, history: [ChatMessage], memory: ContactMemory? = nil) -> String {
         let historyText = formatHistory(history)
-        let memoryBlock = memory?.formattedForPrompt().map { "\n[long-term memory about \(contact)]\n\($0)\n[end memory]\n" } ?? ""
+        let memoryBlock = memory?.formattedForPrompt().map { "[context about \(contact)]\n\($0)\n[end context]\n" } ?? ""
+        let styleBlock = (memory?.styleProfile.isEmpty == false) ? memory!.styleProfile.formattedForPrompt() : ""
 
         return """
-        You are mimicking a person's texting style to draft a message they might send.
+        Task: draft a single text the user might send next to \(contact). Output ONLY the message text, no quotes, no preamble.
 
         \(privacyRules)
-        \(memoryBlock)
-        Here is their recent conversation with \(contact). Messages marked [ME] are from the person \
-        you are mimicking. Messages marked [THEM] are from \(contact).
 
+        \(memoryBlock)
+        Recent thread with \(contact):
         \(historyText)
+
+        \(styleBlock)
+
+        CRITICAL: write ONE message in the user's exact voice. Match the length of the EXAMPLES above. Output only the message text.
 
         Based on the conversation context and the [ME] person's texting style, draft a natural next \
         message they might send to continue or initiate conversation.
@@ -98,6 +84,52 @@ enum ConversationContext {
 
         Draft message:
         """
+    }
+
+    /// Strip common LLM "polish" — leading filler phrases, surrounding quotes, prefixes
+    /// like "Reply:", trailing notes, etc. Run before scrubPII.
+    static func cleanLLMArtifacts(_ text: String) -> String {
+        var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Strip surrounding quotes
+        if (t.hasPrefix("\"") && t.hasSuffix("\"")) || (t.hasPrefix("'") && t.hasSuffix("'")) {
+            t = String(t.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        // Strip leading prefixes models tend to emit
+        let leadingPatterns = [
+            "Reply:", "Response:", "Message:", "Text:", "Answer:",
+            "Here's a reply:", "Here is a reply:", "How about:",
+            "Sure!", "Sure,", "Sure thing!", "Sure thing,",
+            "Of course!", "Of course,",
+            "Got it!", "Okay,", "Alright,",
+            "→"
+        ]
+        for prefix in leadingPatterns {
+            if t.lowercased().hasPrefix(prefix.lowercased()) {
+                t = String(t.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+
+        // Strip trailing "Note:" / "Explanation:" lines that some models tack on
+        if let noteRange = t.range(of: #"\n\s*(Note|Explanation|Reasoning|Style):"#, options: [.regularExpression, .caseInsensitive]) {
+            t = String(t[..<noteRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        // If the model emitted multiple lines that look like alternate variants, take just the first
+        if t.contains("\n") {
+            let lines = t.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            if lines.count > 1 && lines.allSatisfy({ $0.count < 100 }) {
+                // Likely numbered alternates — take the first
+                t = lines[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                // Strip leading "1.", "1)", "-", "*"
+                if let m = t.range(of: #"^\s*(\d+\.|\d+\)|-|\*)\s*"#, options: .regularExpression) {
+                    t = String(t[m.upperBound...])
+                }
+            }
+        }
+
+        return t.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Post-generation safety net: redact obvious PII patterns the LLM might leak.

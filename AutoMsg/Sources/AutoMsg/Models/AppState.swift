@@ -62,7 +62,7 @@ final class AppState: ObservableObject {
     private var remoteServer: RemoteServer?
 
     let dbService = ChatDatabaseService()
-    let ollama = OllamaService()
+    let ollama = OllamaService(model: Persistence.modelName)
     let sender = MessageSender()
     let contactsResolver = ContactsResolver()
     lazy var monitor: MessageMonitor = {
