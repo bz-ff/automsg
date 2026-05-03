@@ -220,7 +220,9 @@ final class MessageMonitor: ObservableObject {
             }
 
             let raw = try await ollama.generate(prompt: prompt)
-            let reply = ConversationContext.scrubPII(ConversationContext.cleanLLMArtifacts(raw))
+            var reply = ConversationContext.cleanLLMArtifacts(raw)
+            reply = ConversationContext.enforceEmojiRate(reply, profile: liveContact.memory.styleProfile)
+            reply = ConversationContext.scrubPII(reply)
             guard !reply.isEmpty else { return }
 
             let preference: AppleScriptRunner.ServicePreference = message.isSMS ? .sms : .iMessage
@@ -275,7 +277,9 @@ final class MessageMonitor: ObservableObject {
             let memory = live.memory.isEmpty ? nil : live.memory
             let prompt = ConversationContext.buildDraftPrompt(contact: live.displayLabel, history: history, memory: memory)
             let raw = try await ollama.generate(prompt: prompt)
-            let draft = ConversationContext.scrubPII(ConversationContext.cleanLLMArtifacts(raw))
+            var draft = ConversationContext.cleanLLMArtifacts(raw)
+            draft = ConversationContext.enforceEmojiRate(draft, profile: live.memory.styleProfile)
+            draft = ConversationContext.scrubPII(draft)
             return draft.isEmpty ? nil : draft
         } catch {
             onError?("Draft generation failed: \(error.localizedDescription)")

@@ -22,8 +22,16 @@ struct UserStyleProfile: Codable, Hashable {
             else if avgLength < 40 { rules.append("Keep it moderately short — 20-40 characters") }
             else { rules.append("Length can vary — typically 40-80 characters") }
         }
-        if emojiRate < 0.1 { rules.append("Rarely use emojis (less than 1 in 10 messages)") }
-        else if emojiRate > 0.5 { rules.append("Frequently use emojis (about half of messages)") }
+        if emojiRate < 0.05 {
+            rules.append("DO NOT use emojis. This person almost never uses them.")
+        } else if emojiRate < 0.15 {
+            rules.append("Avoid emojis. Only use one if absolutely necessary (less than 1 in 10 messages).")
+        } else if emojiRate < 0.35 {
+            rules.append("Use emojis sparingly — at most 1 in every 4 messages.")
+        } else if emojiRate > 0.6 {
+            rules.append("Use emojis frequently (this person uses them in most messages).")
+        }
+        // Otherwise (0.35–0.6 range), leave the model to model emoji frequency from examples
 
         // Critical: only allow abbreviations the user actually uses, and FORBID inventing new ones
         if !commonAbbreviations.isEmpty {

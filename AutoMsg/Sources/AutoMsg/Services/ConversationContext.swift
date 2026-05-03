@@ -86,6 +86,42 @@ enum ConversationContext {
         """
     }
 
+    /// Remove emojis from text if the user's profile says they use them rarely.
+    /// Strips emoji characters and trims whitespace that gets left behind.
+    static func enforceEmojiRate(_ text: String, profile: UserStyleProfile?) -> String {
+        guard let p = profile else { return text }
+        // Only strip if the profile clearly indicates low emoji usage.
+        // emojiRate < 0.15 means fewer than 1 in 7 messages — model output should follow suit.
+        guard p.emojiRate < 0.15 else { return text }
+
+        // Heuristic: if there are 0-1 emojis and the rate is at the boundary, leave them.
+        // If rate < 0.05 (almost never), strip ALL.
+        // If rate < 0.15, strip only when there is more than 1 emoji.
+        var stripped = text
+        var emojiScalars: [Unicode.Scalar] = []
+        for scalar in text.unicodeScalars {
+            if scalar.properties.isEmoji && scalar.value > 0x238C {
+                emojiScalars.append(scalar)
+            }
+        }
+        if emojiScalars.isEmpty { return text }
+
+        let shouldStripAll = p.emojiRate < 0.05 || (p.emojiRate < 0.15 && emojiScalars.count > 1)
+        if shouldStripAll {
+            stripped = String(text.unicodeScalars.filter { !($0.properties.isEmoji && $0.value > 0x238C) })
+            // Also strip variation selectors and zero-width joiners that can be left orphaned
+            stripped = String(stripped.unicodeScalars.filter { $0.value != 0xFE0F && $0.value != 0x200D })
+            stripped = stripped.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            stripped = stripped.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Trim trailing punctuation that often clings to a removed emoji
+            while let last = stripped.last, last == "," || last == "—" || last == "·" {
+                stripped.removeLast()
+                stripped = stripped.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return stripped.isEmpty ? text : stripped
+    }
+
     /// Strip common LLM "polish" — leading filler phrases, surrounding quotes, prefixes
     /// like "Reply:", trailing notes, etc. Run before scrubPII.
     static func cleanLLMArtifacts(_ text: String) -> String {
