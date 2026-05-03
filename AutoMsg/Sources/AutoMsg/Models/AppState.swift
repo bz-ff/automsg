@@ -81,6 +81,19 @@ final class AppState: ObservableObject {
                   let c = self.contacts.first(where: { $0.id == contactKey }) else { return [] }
             return (try? self.dbService.fetchUnifiedHistory(forHandles: c.handles, limit: 20)) ?? []
         }
+        m.contactProvider = { [weak self] contactKey in
+            self?.contacts.first(where: { $0.id == contactKey })
+        }
+        m.onMemoryUpdated = { [weak self] contactID, memory in
+            Task { @MainActor in
+                guard let self,
+                      let idx = self.contacts.firstIndex(where: { $0.id == contactID }) else { return }
+                self.contacts[idx].memory = memory
+            }
+        }
+        m.onAutoReplySkipped = { contactID, reason in
+            print("[AutoMsg] Skipped auto-reply for \(contactID): \(reason)")
+        }
         return m
     }()
 
@@ -285,6 +298,15 @@ final class AppState: ObservableObject {
     func setPreferredHandle(_ handle: String?, for contactID: String) {
         guard let idx = contacts.firstIndex(where: { $0.id == contactID }) else { return }
         contacts[idx].preferredHandle = handle
+    }
+
+    func setSmartMode(_ mode: Contact.SmartMode, for contactID: String) {
+        guard let idx = contacts.firstIndex(where: { $0.id == contactID }) else { return }
+        contacts[idx].smartMode = mode
+        // If switched to off/draftOnly, cancel any pending auto-reply for this contact
+        if mode == .off || mode == .draftOnly {
+            monitor.smartTriggers.cancel(contactID: contactID)
+        }
     }
 
     func regenerateDraft(for contactID: String) async {

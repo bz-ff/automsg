@@ -8,6 +8,16 @@ struct Contact: Identifiable, Codable, Hashable {
     var currentDraft: String?
     var hasHistory: Bool = false
     var preferredHandle: String? = nil
+    var memory: ContactMemory = ContactMemory()
+    var smartMode: SmartMode = .moderate
+
+    enum SmartMode: String, Codable {
+        case alwaysAuto      // ignore gates, reply to everything (today's behavior)
+        case moderate        // grace window + ack/length skip + user-replied-first cancel
+        case focusOnly       // moderate + only when macOS Focus is on
+        case draftOnly       // never auto-send, just draft
+        case off
+    }
 
     var displayLabel: String {
         displayName.isEmpty ? id : displayName

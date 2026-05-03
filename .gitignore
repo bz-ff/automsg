@@ -17,3 +17,6 @@ AutoMsg/AppIcon.icns
 # User prefs / runtime data
 *.plist.bak
 ~/.automsg_prefs.json
+
+# Local Claude Code settings (user-specific permissions)
+.claude/

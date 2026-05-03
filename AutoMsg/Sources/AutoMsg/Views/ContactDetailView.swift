@@ -167,6 +167,34 @@ struct ContactDetailView: View {
                         .controlSize(.mini)
                         .font(.caption)
                 }
+
+                HStack(spacing: 6) {
+                    Text("Mode:")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Picker("", selection: Binding(
+                        get: { contact.smartMode },
+                        set: { newVal in appState.setSmartMode(newVal, for: contact.id) }
+                    )) {
+                        Text("⚡ Always auto").tag(Contact.SmartMode.alwaysAuto)
+                        Text("🤖 Smart (recommended)").tag(Contact.SmartMode.moderate)
+                        Text("🌙 Focus only").tag(Contact.SmartMode.focusOnly)
+                        Text("✏️ Draft only").tag(Contact.SmartMode.draftOnly)
+                        Text("🚫 Off").tag(Contact.SmartMode.off)
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+
+                    if appState.monitor.pendingAutoReplies > 0 {
+                        Text("\(appState.monitor.pendingAutoReplies) pending")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.15))
+                            .cornerRadius(4)
+                    }
+                }
             }
 
             if let info = appState.lastSendInfo {

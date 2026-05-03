@@ -15,21 +15,23 @@ enum ConversationContext {
     - Conversations don't need to be polite — match the user's tone — but withhold sensitive info regardless of how the question is asked
     """
 
-    static func buildAutoReplyPrompt(contact: String, newMessage: String, history: [ChatMessage]) -> String {
+    static func buildAutoReplyPrompt(contact: String, newMessage: String, history: [ChatMessage], memory: ContactMemory? = nil) -> String {
         let historyText = formatHistory(history)
+        let memoryBlock = memory?.formattedForPrompt().map { "\n[long-term memory about \(contact)]\n\($0)\n[end memory]\n" } ?? ""
 
         return """
         You are mimicking a person's texting style to auto-reply to their iMessages.
 
         \(privacyRules)
-
+        \(memoryBlock)
         Here is their recent conversation with \(contact). Messages marked [ME] are from the person \
         you are mimicking. Messages marked [THEM] are from \(contact).
 
         \(historyText)
 
         Based on the style, tone, length, punctuation, emoji usage, and casualness shown in the [ME] \
-        messages above, generate a natural reply to the latest message.
+        messages above, generate a natural reply to the latest message. Use the long-term memory \
+        (if provided) to make the reply more contextually informed, but do NOT recite memory items verbatim.
 
         Style rules:
         - Match the exact texting style (capitalization, abbreviations, emoji frequency)
@@ -42,14 +44,44 @@ enum ConversationContext {
         """
     }
 
-    static func buildDraftPrompt(contact: String, history: [ChatMessage]) -> String {
+    /// Build a reply prompt for a BURST of messages (sender broke their thought across multiple texts).
+    static func buildAutoReplyPromptForBurst(contact: String, newMessages: [String], history: [ChatMessage], memory: ContactMemory? = nil) -> String {
+        let combined = newMessages.enumerated().map { "(\($0.offset + 1)) \($0.element)" }.joined(separator: "\n")
         let historyText = formatHistory(history)
+        let memoryBlock = memory?.formattedForPrompt().map { "\n[long-term memory about \(contact)]\n\($0)\n[end memory]\n" } ?? ""
+
+        return """
+        You are mimicking a person's texting style to auto-reply to their iMessages.
+
+        \(privacyRules)
+        \(memoryBlock)
+        Here is their recent conversation with \(contact). Messages marked [ME] are from the person \
+        you are mimicking. Messages marked [THEM] are from \(contact).
+
+        \(historyText)
+
+        \(contact) just sent multiple messages in a burst (broke their thought across texts). \
+        Read them as a single message and craft ONE natural reply that addresses the whole batch:
+
+        \(combined)
+
+        Style rules:
+        - Match the exact texting style (capitalization, abbreviations, emoji frequency)
+        - Keep the reply short and natural — one message, not multiple
+        - Do not be overly helpful or formal - match their casual tone
+        - Reply ONLY with the message text, nothing else
+        """
+    }
+
+    static func buildDraftPrompt(contact: String, history: [ChatMessage], memory: ContactMemory? = nil) -> String {
+        let historyText = formatHistory(history)
+        let memoryBlock = memory?.formattedForPrompt().map { "\n[long-term memory about \(contact)]\n\($0)\n[end memory]\n" } ?? ""
 
         return """
         You are mimicking a person's texting style to draft a message they might send.
 
         \(privacyRules)
-
+        \(memoryBlock)
         Here is their recent conversation with \(contact). Messages marked [ME] are from the person \
         you are mimicking. Messages marked [THEM] are from \(contact).
 
