@@ -12,8 +12,9 @@ cd "$PROJECT_DIR"
 echo "==> Building AutoMsg.app"
 bash "$PROJECT_DIR/build.sh"
 
-echo "==> Ad-hoc signing the app"
-codesign --force --deep --sign - "$APP_BUNDLE"
+# build.sh already signs the app (preferring the stable identity if available).
+# Re-verify here just to make sure the signature is valid before packaging.
+echo "==> Verifying signature"
 
 # Verify
 codesign --verify --deep --strict "$APP_BUNDLE" && echo "  signature OK"

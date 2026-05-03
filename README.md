@@ -47,6 +47,16 @@ open AutoMsg.app
 bash Scripts/build_dmg.sh      # produces AutoMsg.dmg
 ```
 
+### Stop re-granting Full Disk Access on every rebuild
+
+By default, `build.sh` ad-hoc signs the app — which means every rebuild produces a new code signature, so macOS treats the app as brand new and forgets your Full Disk Access / Contacts grants. To make those grants persist across rebuilds, create a stable self-signed identity once:
+
+```bash
+bash Scripts/setup_signing.sh
+```
+
+This walks you through creating a self-signed code-signing certificate via Keychain Access (one-time, ~30 seconds). After it's done, every future `build.sh` will sign with that stable identity and macOS will recognize rebuilt versions as the same app.
+
 ## Architecture
 
 - **Sources/AutoMsg/Models** — Contact, Message, AppState

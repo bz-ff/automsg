@@ -41,6 +41,17 @@ if [ ! -f "$PROJECT_DIR/AppIcon.icns" ]; then
 fi
 cp "$PROJECT_DIR/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
+# Sign the app. Prefer the stable self-signed identity if present so that
+# Full Disk Access / Contacts grants persist across rebuilds.
+SIGN_ID="AutoMsg Self-Signed"
+if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_ID"; then
+    echo "Signing with stable identity: $SIGN_ID"
+    codesign --force --deep --sign "$SIGN_ID" "$APP_BUNDLE" 2>&1 | tail -3
+else
+    echo "Signing ad-hoc (run Scripts/setup_signing.sh once to make permissions persist)"
+    codesign --force --deep --sign - "$APP_BUNDLE" 2>&1 | tail -3
+fi
+
 cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
