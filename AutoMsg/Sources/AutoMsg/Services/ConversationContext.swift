@@ -10,16 +10,18 @@ enum ConversationContext {
         let memoryBlock = memory?.formattedForPrompt().map { "[context about \(contact)]\n\($0)\n[end context]\n" } ?? ""
         let styleBlock = (memory?.styleProfile.isEmpty == false) ? memory!.styleProfile.formattedForPrompt() : ""
 
-        // Relationship + intent shape what kind of reply is expected
         let relationship = memory?.relationship ?? .unknown
         let relationshipBlock = "RELATIONSHIP: \(relationship.label). \(relationship.toneRules)"
         let intentBlock: String = {
             guard let intent = intent else { return "" }
-            return "MESSAGE TYPE: \(intent.rawValue). HOW TO RESPOND: \(intent.responseGuide)"
+            return "MESSAGE TYPE: \(intent.rawValue)\nHOW TO RESPOND:\n\(intent.responseGuide)"
         }()
 
+        // CRITICAL prompt structure: the incoming message is positioned at the very END,
+        // right before "Reply:" — LLMs weight recent tokens heavily, so this keeps the
+        // model focused on what the contact ACTUALLY said when generating.
         return """
-        You are texting back AS the user — not answering their messages, not summarizing what was said, not narrating tasks. You ARE them, and you respond the way they actually would.
+        You are texting back AS the user — you ARE them. Not answering their messages, not summarizing, not narrating.
 
         \(privacyRules)
 
@@ -28,29 +30,35 @@ enum ConversationContext {
 
         \(intentBlock)
 
-        Recent thread with \(contact):
+        Earlier thread with \(contact) (oldest first):
         \(historyText)
-
-        New message from \(contact): "\(newMessage)"
 
         \(styleBlock)
 
-        CRITICAL RULES:
-        - Write ONE short message in the user's exact voice
-        - Do NOT echo their message back. Do NOT summarize what they said.
-        - Do NOT acknowledge their message as if it were a task ("got it", "sounds good", "noted", "okay will do")
-        - Do NOT offer help unless they asked. Do NOT explain. Do NOT greet.
-        - If you cannot give a real reply without information only the user knows, output exactly: INSUFFICIENT_CONTEXT
-        - Match the length of the EXAMPLES — if they're short, you're short
+        UNIVERSAL RULES (apply to every reply):
+        - Your reply MUST engage with the SPECIFIC content of their latest message — not a generic reaction
+        - If they shared information, your reply must show you READ it. Reference a specific detail.
+        - DO NOT ask a question whose answer is in the message you're replying to. Read it carefully.
+        - DO NOT echo or summarize what they said back to them.
+        - DO NOT acknowledge as a task ("got it", "okay", "noted", "sounds good", "will do")
+        - DO NOT offer help they didn't ask for. DO NOT greet. DO NOT explain.
+        - Match the length of EXAMPLES — if they're short, you're short
+        - One message only
         - Output ONLY the message text, no quotes, no labels
+        - If you genuinely can't reply without info only the user knows, output exactly: INSUFFICIENT_CONTEXT
 
-        Reply:
+        ===
+        \(contact) just sent you (this is what you must reply to):
+        "\(newMessage)"
+        ===
+
+        Your one-line reply (in the user's voice, engaging with what they specifically said):
         """
     }
 
     /// Build a reply prompt for a BURST of messages (sender broke their thought across multiple texts).
     static func buildAutoReplyPromptForBurst(contact: String, newMessages: [String], history: [ChatMessage], memory: ContactMemory? = nil, intent: MessageIntent? = nil) -> String {
-        let combined = newMessages.map { "\"\($0)\"" }.joined(separator: " then ")
+        let combined = newMessages.enumerated().map { "(\($0.offset + 1)) \"\($0.element)\"" }.joined(separator: "\n")
         let historyText = formatHistory(history)
         let memoryBlock = memory?.formattedForPrompt().map { "[context about \(contact)]\n\($0)\n[end context]\n" } ?? ""
         let styleBlock = (memory?.styleProfile.isEmpty == false) ? memory!.styleProfile.formattedForPrompt() : ""
@@ -59,11 +67,11 @@ enum ConversationContext {
         let relationshipBlock = "RELATIONSHIP: \(relationship.label). \(relationship.toneRules)"
         let intentBlock: String = {
             guard let intent = intent else { return "" }
-            return "MESSAGE TYPE: \(intent.rawValue). HOW TO RESPOND: \(intent.responseGuide)"
+            return "MESSAGE TYPE: \(intent.rawValue)\nHOW TO RESPOND:\n\(intent.responseGuide)"
         }()
 
         return """
-        You are texting back AS the user. \(contact) just sent multiple messages in a burst — respond to the whole batch with ONE message. You ARE them, not answering them.
+        You are texting back AS the user — you ARE them. \(contact) just sent multiple messages in a burst — respond with ONE message that addresses the whole batch.
 
         \(privacyRules)
 
@@ -72,23 +80,26 @@ enum ConversationContext {
 
         \(intentBlock)
 
-        Recent thread with \(contact):
+        Earlier thread with \(contact) (oldest first):
         \(historyText)
-
-        \(contact) just sent (in a burst): \(combined)
 
         \(styleBlock)
 
-        CRITICAL RULES:
-        - Write ONE short message in the user's exact voice that addresses the whole burst
-        - Do NOT echo their messages back. Do NOT summarize.
-        - Do NOT acknowledge as a task ("got it", "sounds good")
-        - Do NOT offer help unless they asked
-        - If you can't reply without info only the user knows, output: INSUFFICIENT_CONTEXT
-        - Match the length of the EXAMPLES
-        - Output ONLY the message text
+        UNIVERSAL RULES:
+        - Your reply MUST engage with the SPECIFIC content of their burst
+        - Reference at least one specific detail from what they said
+        - DO NOT ask about info they already provided
+        - DO NOT echo or summarize back
+        - DO NOT acknowledge as a task
+        - One message only, no quotes, no labels
+        - If you can't reply without info only the user knows: INSUFFICIENT_CONTEXT
 
-        Reply:
+        ===
+        \(contact) just sent you (in a burst — this is what you must reply to):
+        \(combined)
+        ===
+
+        Your one-line reply (in the user's voice, engaging with the burst):
         """
     }
 
@@ -134,6 +145,44 @@ enum ConversationContext {
         let t = text.uppercased()
         return t.contains("INSUFFICIENT_CONTEXT") || t.contains("INSUFFICIENT CONTEXT")
             || t.contains("CANNOT REPLY") || t.contains("NEED MORE INFO")
+    }
+
+    /// Detect when the AI's reply asks about something already explicitly answered
+    /// in the incoming message. Catches the "Wyd abt park?" → "left at 7:30" mismatch.
+    /// Returns true if the reply is a probable non-sequitur question.
+    static func isNonSequiturQuestion(reply: String, incoming: String) -> Bool {
+        let r = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard r.contains("?") else { return false }   // only check questions
+
+        let incomingLower = incoming.lowercased()
+        let replyLower = r.lowercased()
+
+        // Common question stems that ask "what about X" / "wyd at X" / "what time"
+        let questionStems = [
+            "wyd abt", "wyd at", "wyd with", "what abt", "what about",
+            "how was", "how is", "where is", "where r u", "where are u",
+            "what time", "when is", "when did", "when r u", "when are u",
+            "did u", "did you"
+        ]
+
+        guard questionStems.contains(where: { replyLower.contains($0) }) else { return false }
+
+        // Extract significant content nouns from the incoming message.
+        // If the reply asks about a noun that appears in the incoming, it's likely
+        // a non-sequitur — they ALREADY mentioned it.
+        let incomingWords = Set(
+            incomingLower
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { $0.count >= 4 }   // ignore short stop words
+        )
+        let replyWords = Set(
+            replyLower
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { $0.count >= 4 }
+        )
+        let overlap = incomingWords.intersection(replyWords)
+        // If the reply is asking about a topic the incoming explicitly covered, flag it
+        return overlap.count >= 1
     }
 
     /// Detect when the model parroted back the incoming message or one of the

@@ -17,34 +17,95 @@ enum MessageIntent: String, Codable {
     case needsUser        // genuinely insufficient context — user-specific question
 
     /// What posture the AI should adopt for this kind of message.
+    /// Includes concrete grounding examples — what to do AND what to avoid.
     var responseGuide: String {
         switch self {
         case .question:
-            return "Answer directly if you can. If the answer is something only the user knows (their plans, schedule, choices), do NOT make it up — output INSUFFICIENT_CONTEXT instead."
+            return """
+            They asked a question. Answer directly using what you actually know from the conversation history. \
+            If the answer requires user-only info (their plans, opinions, schedule), output INSUFFICIENT_CONTEXT. \
+            DO NOT ask a clarifying question that they already answered in the message itself.
+            """
         case .logistics:
-            return "Brief acknowledgment with optional natural commentary. Do NOT echo their info back. Do NOT say 'got it' or 'noted'."
+            return """
+            They shared factual info (a time, place, or plan detail). React naturally:
+            - Acknowledge with light commentary that references what they said specifically
+            - Or ask a NEW follow-up that builds on the info — not one they already answered
+            FORBIDDEN: "got it" / "noted" / "okay" / echoing their info back / asking about a detail they already provided.
+            EXAMPLE: They say "park opens at 10" → good: "oof, long line then?" / "well at least its early" / "lol u camping out?". Bad: "what time again?", "what about the park?"
+            """
         case .statusShare:
-            return "React like a friend reading what they're doing — show interest, well-wishes, or banter depending on the relationship. Do NOT acknowledge as a task. Do NOT echo their message back. Examples of good reactions: 'oh nice', 'have fun', 'lmk how it is', 'lol enjoy'."
+            return """
+            They're sharing what they're doing or where they are. React with brief warmth/interest:
+            - Reference what they specifically said
+            - Show you read it (acknowledgment + small reaction)
+            - Optionally extend with a related follow-up that fits the moment
+            FORBIDDEN: asking about info they ALREADY shared. Echoing their message back. "Got it" / "okay" responses.
+            EXAMPLE: They say "we checked in to the hotel, left the park at 7:30" → good: "nice, long day?" / "u tired?" / "any good rides?" / "ok rest up". Bad: "wyd abt park?" / "when did u leave the park?" (they JUST told you).
+            """
         case .planInvitation:
-            return "Respond with availability/intent. If you can't commit on the user's behalf without info they only have, output INSUFFICIENT_CONTEXT."
+            return """
+            They proposed plans or invited the user to something. Respond with intent or availability.
+            If committing requires info only the user knows (calendar, preference, budget), output INSUFFICIENT_CONTEXT.
+            FORBIDDEN: vague non-answers like "sure!" / "sounds good!" without engaging the actual proposal.
+            """
         case .newsPositive:
-            return "Genuine congratulations matching the relationship's intensity. Don't overdo it for non-close contacts."
+            return """
+            They shared good news. Match the relationship intensity with congratulations:
+            - Reference WHAT they're celebrating, not generic "congrats"
+            - For close contacts, more enthusiastic. For acquaintances, brief and warm.
+            FORBIDDEN: generic "that's great!" without engaging the specific news.
+            """
         case .newsNegative:
-            return "Empathy first. No problem-solving unless asked. Match the relationship's closeness."
+            return """
+            They shared bad news. Empathy first, no problem-solving:
+            - Acknowledge what specifically happened
+            - Show care without giving advice unless asked
+            FORBIDDEN: jumping to solutions. Toxic positivity ("everything happens for a reason"). Minimizing.
+            """
         case .vent:
-            return "Validate, don't fix. Empathize. Match their energy. No lectures."
+            return """
+            They're venting. Validate their feeling, don't fix:
+            - Reflect what they specifically said
+            - Match their energy
+            FORBIDDEN: lectures, advice they didn't ask for, "have you tried..." responses.
+            """
         case .banter:
-            return "Match the energy. Banter back. Don't be a buzzkill."
+            return """
+            They're joking/teasing. Match the energy:
+            - Banter back at the same level
+            - Don't go meta ("haha that's funny")
+            FORBIDDEN: explaining why something is funny, breaking the rhythm with seriousness.
+            """
         case .disagreement:
-            return "Engage if the relationship supports it. Don't be sycophantic. Don't escalate either."
+            return """
+            They pushed back. Engage if the relationship allows it:
+            - Don't be sycophantic ("you're so right")
+            - Don't escalate either
+            - Acknowledge their point THEN respond
+            """
         case .confession:
-            return "Slow down. Acknowledge the weight. Do NOT deflect with humor unless that is clearly the relationship's pattern. If unsure, output INSUFFICIENT_CONTEXT."
+            return """
+            They opened up emotionally. Slow down:
+            - Acknowledge what they shared specifically
+            - Match the weight; don't deflect with humor unless that's clearly your pattern
+            If unsure, output INSUFFICIENT_CONTEXT — let the user respond personally.
+            """
         case .flirt:
-            return "Match the contact's tone if the relationship is romantic. Otherwise stay friendly without flirting."
+            return """
+            Flirty/affectionate message. Match the contact's tone IF the relationship is romantic.
+            Otherwise stay friendly without flirting back.
+            """
         case .requestHelp:
-            return "Respond with capacity. If the user actually has to do something, output INSUFFICIENT_CONTEXT — don't promise on their behalf."
+            return """
+            They asked for help. If the user actually has to do something physical or specific to them,
+            output INSUFFICIENT_CONTEXT — don't promise on their behalf. Otherwise respond with capacity.
+            """
         case .smallTalk:
-            return "Brief, equal-energy small talk. One short message."
+            return """
+            Greeting or filler. One brief, matched-energy message.
+            FORBIDDEN: long replies. Generic "how was your day" follow-ups unless that's the pattern.
+            """
         case .needsUser:
             return "OUTPUT EXACTLY: INSUFFICIENT_CONTEXT"
         }

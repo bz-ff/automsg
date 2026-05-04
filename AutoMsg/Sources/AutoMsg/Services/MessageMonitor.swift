@@ -235,30 +235,47 @@ final class MessageMonitor: ObservableObject {
                 )
             }
 
-            let raw = try await ollama.generate(prompt: prompt)
+            // Generate with one retry: if the first attempt fails sanity checks,
+            // regenerate once with explicit feedback before giving up to drafts.
+            var reply = ""
+            var rawAttempt = ""
+            for attempt in 0..<2 {
+                rawAttempt = try await ollama.generate(prompt: attempt == 0 ? prompt : prompt + "\n\nThe last attempt was bad — make sure your reply specifically engages with what they said and does not ask about info already in their message.")
 
-            // Abstain sentinel from the model itself
-            if ConversationContext.isInsufficientContext(raw) {
-                print("[Abstain] \(contact.displayLabel): model returned INSUFFICIENT_CONTEXT")
-                onAbstainedToDraft?(contact.id, "AI flagged this needs your input", "")
-                return
+                if ConversationContext.isInsufficientContext(rawAttempt) {
+                    print("[Abstain] \(contact.displayLabel): model returned INSUFFICIENT_CONTEXT")
+                    onAbstainedToDraft?(contact.id, "AI flagged this needs your input", "")
+                    return
+                }
+
+                var candidate = ConversationContext.cleanLLMArtifacts(rawAttempt)
+                candidate = ConversationContext.enforceSpelling(candidate, profile: liveContact.memory.styleProfile)
+                candidate = ConversationContext.enforceEmojiRate(candidate, profile: liveContact.memory.styleProfile)
+                candidate = ConversationContext.scrubPII(candidate)
+
+                if candidate.isEmpty { continue }
+
+                let parrotComparisons: [String] = mergedMessages.map { $0.text } +
+                    history.filter { $0.isFromMe }.suffix(8).map { $0.text }
+                if ConversationContext.isParrot(candidate, against: parrotComparisons) {
+                    print("[Parrot] \(contact.displayLabel) attempt \(attempt + 1): output too similar to recent messages")
+                    if attempt == 0 { continue }   // retry once
+                    onAbstainedToDraft?(contact.id, "AI parroted the conversation — draft manually", candidate)
+                    return
+                }
+
+                let latestText = mergedMessages.last?.text ?? message.text
+                if ConversationContext.isNonSequiturQuestion(reply: candidate, incoming: latestText) {
+                    print("[NonSequitur] \(contact.displayLabel) attempt \(attempt + 1): reply asks about info already in the message")
+                    if attempt == 0 { continue }   // retry once
+                    onAbstainedToDraft?(contact.id, "AI's reply ignored what they said — draft manually", candidate)
+                    return
+                }
+
+                reply = candidate
+                break
             }
-
-            var reply = ConversationContext.cleanLLMArtifacts(raw)
-            reply = ConversationContext.enforceSpelling(reply, profile: liveContact.memory.styleProfile)
-            reply = ConversationContext.enforceEmojiRate(reply, profile: liveContact.memory.styleProfile)
-            reply = ConversationContext.scrubPII(reply)
             guard !reply.isEmpty else { return }
-
-            // Parrot guard: reject if the reply is essentially just echoing back the
-            // incoming message or one of the user's own recent messages.
-            let parrotComparisons: [String] = mergedMessages.map { $0.text } +
-                history.filter { $0.isFromMe }.suffix(8).map { $0.text }
-            if ConversationContext.isParrot(reply, against: parrotComparisons) {
-                print("[Parrot] \(contact.displayLabel): output too similar to recent messages, abstaining")
-                onAbstainedToDraft?(contact.id, "AI parroted the conversation — draft manually", reply)
-                return
-            }
 
             let preference: AppleScriptRunner.ServicePreference = message.isSMS ? .sms : .iMessage
             try await sender.send(text: reply, to: message.contactID, allowSMS: allowSMSReplies, prefer: preference)
